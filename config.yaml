@@ -1,0 +1,3 @@
+api_base: "http://localhost:5001/v1"
+api_key: "CHANGEME"
+model: "mistrel-7b-openorca"

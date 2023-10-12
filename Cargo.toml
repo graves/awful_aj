@@ -1,0 +1,37 @@
+[package]
+name = "awful_aj"
+version = "0.1.0"
+edition = "2021"
+authors = ["Thomas Gentry <thomas@awfulsec.com>"]
+description = "A CLI for interacting with OpenAI compatible APIs"
+license = "MIT"
+repository = "https://github.com/graves/awful_aj.git"
+readme = "README.md"
+homepage = "https://github.com/graves/awful_aj"
+keywords = ["openai", "gpt3", "cli", "api"]
+categories = ["cli", "api"]
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[[bin]]
+name = "aj"
+path = "src/main.rs"
+
+[dependencies]
+async-openai = "0.14.3"
+clap = { version = "4.4.6", features = ["derive", "color"] }
+crossterm = "0.27.0"
+directories = "5.0.1"
+futures = "0.3.28"
+once_cell = "1.18.0"
+reqwest = "0.11.22"
+serde = { version = "1.0.188", features = ["derive"]}
+serde_derive = "1.0.188"
+serde_json = "1.0.107"
+serde_yaml = "0.9.25"
+tempfile = "3.8.0"
+tokio = { version = "1.33.0", features = ["full"] }
+tracing = "0.1.37"
+tracing-subscriber = "0.3.17"
+
+[dev-dependencies]
+httpmock = "0.6.8"

@@ -1,0 +1,16 @@
+system_prompt: "You are Awful Jade, a helpful AI assistant programmed by Awful Security." # System prompt
+messages: # Optional list of messages to be sent before user prompt(s)
+  - { role: user, content: "How do I read a file in Rust?" }
+  - { role: assistant, content: "Use `std::fs::File` and `std::io::Read` in Rust to read a file:
+```rust
+use std::fs::File;
+use std::io::{self, Read};
+
+fn main() -> io::Result<()> {
+    let mut file = File::open(\"file.txt\")?;
+    let mut content = String::new();
+    file.read_to_string(&mut content)?;
+    println!(\"{}\", content);
+    Ok(())
+}
+```" }
