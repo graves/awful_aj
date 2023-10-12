@@ -49,7 +49,7 @@ If no question is provided, a default question is used.
 
 Templates reside in the `~/.config/aj/templates` directory. Feel free to add or modify templates as needed. A default template, `simple_question.yml`, is provided during initialization.
 
-### Development
+## Development
 
 Clone the repository:
 ```sh
@@ -71,10 +71,10 @@ When running the test suite you can safely ignore the following error:
 error: stream failed: Invalid header value: "application/json"
 ```
 
-### Contributing
+## Contributing
 
 Contributions are welcome! Feel free to open a PR.
 
-### License
+## License
 
 awful_aj is under the [MIT License](LICENSE).
