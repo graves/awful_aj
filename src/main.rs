@@ -53,31 +53,28 @@ fn main() -> Result<(), Box<dyn Error>> {
 /// Returns an error if there is an issue loading the configuration, parsing the command-line
 /// arguments, or executing the specified command.
 async fn run() -> Result<(), Box<dyn Error>> {
-    println!(
-        "IN_TEST_ENVIRONMENT in run {}",
-        env::var("IN_TEST_ENVIRONMENT").unwrap_or_default()
-    );
-    let config_path = if env::var("IN_TEST_ENVIRONMENT").is_ok() {
-        // If we're in a test environment, load the config from the project directory
-        let path = env::current_dir()?.join("config.yaml");
-        println!("Loading config from: {}", path.display());
-        path
-    } else {
-        println!("Loading config from {}", config_dir()?.join("config.yaml").display());
-        // Otherwise, load the config from the user's config directory
-        config_dir()?.join("config.yaml")
-    };
-
-    debug!("Loading config from: {}", config_path.display());
-    let jade_config = config::load_config(config_path.to_str().unwrap())?;
-    debug!("Config loaded: {:?}", jade_config);
     let cli = commands::Cli::parse();
 
     match cli.command {
         commands::Commands::Ask { question } => {
+            let config_path = if env::var("IN_TEST_ENVIRONMENT").is_ok() {
+                // If we're in a test environment, load the config from the project directory
+                env::current_dir()?.join("config.yaml")
+            } else {
+                // Otherwise, load the config from the user's config directory
+                config_dir()?.join("config.yaml")
+            };
+
+            debug!("Loading config from: {}", config_path.display());
+
+            let jade_config = config::load_config(config_path.to_str().unwrap())?;
+
+            debug!("Config loaded: {:?}", jade_config);
             debug!("Asking question: {:?}", question);
+
             let template = template::load_template("simple_question").await?;
             let question = question.unwrap_or_else(|| "What is the meaning of life?".to_string());
+
             api::ask(&jade_config, question, template).await?;
         }
         commands::Commands::Init => {
