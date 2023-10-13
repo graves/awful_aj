@@ -63,7 +63,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
         println!("Loading config from: {}", path.display());
         path
     } else {
-        println!("Loading config from default location");
+        println!("Loading config from {}", config_dir()?.join("config.yaml").display());
         // Otherwise, load the config from the user's config directory
         config_dir()?.join("config.yaml")
     };
