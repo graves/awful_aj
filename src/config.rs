@@ -33,6 +33,12 @@ pub struct AwfulJadeConfig {
 
     /// The name of the model to be used for generating responses.
     pub model: String,
+
+    // The context size of the model.
+    pub context_max_tokens: u16,
+
+    // Minimum context size for the assistant.
+    pub assistant_minimum_context_tokens: u16,
 }
 
 /// Loads the application's configuration from a YAML file.
@@ -73,29 +79,33 @@ mod tests {
     use tempfile::NamedTempFile;
 
     #[test]
-    fn test_load_config_valid_file() {
-        // Create a temporary file with a valid configuration.
-        let mut temp_file = NamedTempFile::new().unwrap();
-        writeln!(
-            temp_file,
-            r#"
+fn test_load_config_valid_file() {
+    // Create a temporary file with a valid configuration.
+    let mut temp_file = NamedTempFile::new().unwrap();
+    writeln!(
+        temp_file,
+        r#"
 api_key: "example_api_key"
 api_base: "http://example.com"
 model: "example_model"
+context_max_tokens: 8192
+assistant_minimum_context_tokens: 2048
 "#
-        )
-        .unwrap();
+    )
+    .unwrap();
 
-        // Load the configuration from the temporary file.
-        let config = load_config(temp_file.path().to_str().unwrap());
+    // Load the configuration from the temporary file.
+    let config = load_config(temp_file.path().to_str().unwrap());
 
-        // Assert that the configuration was loaded successfully and has the expected values.
-        assert!(config.is_ok());
-        let config = config.unwrap();
-        assert_eq!(config.api_key, "example_api_key");
-        assert_eq!(config.api_base, "http://example.com");
-        assert_eq!(config.model, "example_model");
-    }
+    // Assert that the configuration was loaded successfully and has the expected values.
+    assert!(config.is_ok());
+    let config = config.unwrap();
+    assert_eq!(config.api_key, "example_api_key");
+    assert_eq!(config.api_base, "http://example.com");
+    assert_eq!(config.model, "example_model");
+    assert_eq!(config.context_max_tokens, 8192u16);
+    assert_eq!(config.assistant_minimum_context_tokens, 2048u16);
+}
 
     #[test]
     fn test_load_config_invalid_file() {

@@ -52,6 +52,15 @@ pub enum Commands {
         question: Option<String>,
     },
 
+    /// The 'interactive' subcommand, which can have an optional name for the conversation.
+    ///
+    /// This subcommand can be invoked with either 'i' or 'interactive'.
+    #[clap(name = "interactive", alias = "i")]
+    Interactive {
+        /// The name of the conversation to load or create. If not provided, a default name is used.
+        name: Option<String>,
+    },
+
     /// The 'init' subcommand, which takes no arguments and is used for initialization.
     ///
     /// When invoked, this subcommand performs setup and initialization tasks, such

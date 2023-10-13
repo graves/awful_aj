@@ -1,3 +1,5 @@
 api_base: "http://localhost:5001/v1"
 api_key: "CHANGEME"
 model: "mistrel-7b-openorca"
+context_max_tokens: 8192
+assistant_minimum_context_tokens: 2048

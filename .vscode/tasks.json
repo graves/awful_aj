@@ -1,0 +1,22 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "build",
+            "type": "shell",
+            "command": "cargo build",
+            "options": {
+                "env": {
+                    "LIBTORCH": "/opt/homebrew/Caskroom/miniconda/base/lib/python3.11/site-packages/torch"
+                }
+            },
+            "problemMatcher": [
+                "$rustc"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        }
+    ]
+}
