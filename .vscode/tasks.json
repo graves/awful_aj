@@ -4,10 +4,12 @@
         {
             "label": "build",
             "type": "shell",
-            "command": "cargo build",
+            "command": "source $nu.config-path; cargo build",
             "options": {
                 "env": {
-                    "LIBTORCH": "/opt/homebrew/Caskroom/miniconda/base/lib/python3.11/site-packages/torch"
+                    "LIBTORCH": "/opt/homebrew/Caskroom/miniconda/base/lib/python3.11/site-packages/torch",
+                    "LIBTORCH_USE_PYTORCH": "1",
+                    "DYLD_LIBRARY_PATH": "/opt/homebrew/Caskroom/miniconda/base/lib/python3.11/site-packages/torch/lib"
                 }
             },
             "problemMatcher": [

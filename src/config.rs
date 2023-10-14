@@ -15,7 +15,7 @@
 //! println!("{:?}", config);
 //! ```
 
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use std::{error::Error, fs};
 
 /// Represents the application's configuration.
@@ -23,7 +23,7 @@ use std::{error::Error, fs};
 /// This struct holds the configuration parameters needed to run the application,
 /// such as API key, API base URL, and model name. It can be constructed by loading
 /// a YAML configuration file using the `load_config` function.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct AwfulJadeConfig {
     /// The API key used to authenticate requests to the API.
     pub api_key: String,

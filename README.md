@@ -2,6 +2,8 @@
 
 `aj` is a command-line tool designed to facilitate the development of features on top of locally running Large Language Models (LLMs). It is specifically tailored to work seamlessly with the [Text Generation Web UI](https://github.com/oobabooga/text-generation-webui/) with the [OpenAI extension enabled](https://github.com/oobabooga/text-generation-webui/tree/main/extensions/openai), ensuring a smooth and efficient development experience without the need for complex configurations or setups.
 
+![Awful Jade CLI tool logo](aj.png)
+
 ## Features
 
 - **Local Large Language Model Interaction**: Directly interact with your locally running LLM from the command line.

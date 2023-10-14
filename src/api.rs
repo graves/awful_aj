@@ -63,36 +63,6 @@ fn create_client(config: &AwfulJadeConfig) -> Result<Client<OpenAIConfig>, Box<d
     Ok(Client::with_config(openai_config))
 }
 
-/// Prepares a vector of messages for the chat completion request, including the system prompt and user's question.
-///
-/// # Arguments
-///
-/// * `question` - A reference to the string containing the user's question.
-/// * `template` - A `ChatTemplate` object containing the system prompt and optional initial messages.
-///
-/// # Returns
-///
-/// A Result containing a vector of prepared messages if successful, otherwise returns an Error.
-///
-/// # Errors
-///
-/// Returns an Error if there is a problem preparing the messages.
-async fn prepare_messages(
-    template: ChatTemplate,
-) -> Result<Vec<ChatCompletionRequestMessage>, Box<dyn Error>> {
-    let mut messages = vec![ChatCompletionRequestMessage {
-        role: Role::System,
-        content: Some(template.system_prompt.clone()),
-        name: None,
-        function_call: None,
-    }];
-    messages.extend(template.messages);
-
-    debug!("Prepared messages: {:?}", messages);
-
-    Ok(messages)
-}
-
 /// Streams the response from the OpenAI API and prints it to the console in bold blue text.
 ///
 /// This function also ensures that the assistant has a minimum number of tokens to generate a response
@@ -122,6 +92,7 @@ async fn stream_response(
     mut vector_store: Option<&mut VectorStore>,
     brain: Option<&mut Brain>,
 ) -> Result<ChatCompletionRequestMessage, Box<dyn Error>> {
+    let tokens_for_brain = (config.context_max_tokens as f32 * 0.25) as usize;  // 25% of the total tokens
     let mut max_tokens = get_chat_completion_max_tokens("gpt-4", &messages)? as u16;
     debug!("Max tokens: {}", max_tokens);
     let assistant_minimum_context_tokens = std::cmp::min(
@@ -134,19 +105,21 @@ async fn stream_response(
     );
 
     while max_tokens < assistant_minimum_context_tokens {
-        if messages.len() > 1 {
-            let ejected_user_message = messages.remove(1);
-            let ejected_assistant_message = messages.remove(1);
+        // First message should be the system prompt, second should be the brain, third should be a fake assistant acknowledgement.
+        if messages.len() > 3 {
+            let ejected_user_message = messages.remove(3);
+            let ejected_assistant_message = messages.remove(3);
 
             if let Some(the_vector_store) = vector_store.as_deref_mut() {
-                // Corrected this line
                 if let Some(content) = ejected_user_message.content {
                     let vector = the_vector_store.embed_text_to_vector(&content)?;
-                    the_vector_store.add_vector_with_content(vector, content.clone())?;
+                    let memory = Memory::new(Role::User, content.clone());
+                    the_vector_store.add_vector_with_content(vector, memory)?;
                 }
                 if let Some(content) = ejected_assistant_message.content {
                     let vector = the_vector_store.embed_text_to_vector(&content)?;
-                    the_vector_store.add_vector_with_content(vector, content.clone())?;
+                    let memory = Memory::new(Role::Assistant, content.clone());
+                    the_vector_store.add_vector_with_content(vector, memory)?;
                 }
 
                 the_vector_store.build()?;
@@ -224,7 +197,7 @@ pub async fn ask(
     template: ChatTemplate,
 ) -> Result<(), Box<dyn Error>> {
     let client = create_client(config)?;
-    let mut messages = prepare_messages(template).await?;
+    let mut messages = prepare_messages(template)?;
     messages.push(ChatCompletionRequestMessage {
         role: Role::User,
         content: Some(question.to_string()),
@@ -234,6 +207,21 @@ pub async fn ask(
     let _response = stream_response(&client, config.model.clone(), messages, &config, None, None).await?;
 
     Ok(())
+}
+
+fn prepare_messages(template: ChatTemplate) -> Result<Vec<ChatCompletionRequestMessage>, Box<dyn Error>> {
+    let mut messages = vec![ChatCompletionRequestMessage {
+        role: Role::System,
+        content: Some(template.system_prompt.clone()),
+        name: None,
+        function_call: None,
+    }];
+
+    for message in template.messages {
+        messages.push(message);
+    }
+
+    Ok(messages)
 }
 
 /// Handles the interactive mode where the user can continuously ask questions and receive responses.
@@ -255,15 +243,13 @@ pub async fn interactive_mode(
     conversation_name: String,
     mut vector_store: VectorStore,
     mut brain: Brain,
+    template: &ChatTemplate,
 ) -> Result<(), Box<dyn Error>> {
     // Display existing conversation history, or start a new conversation
     println!("Conversation: {}", conversation_name);
 
-    // Load the default template
-    let template = template::load_template("default").await?;
-
     // Prepare messages for API request
-    let mut messages = prepare_messages(template.clone()).await?;
+    let mut messages = brain.build_preamble().expect("Failed to build preamble");
 
     loop {
         // Save the current cursor position
@@ -298,21 +284,22 @@ pub async fn interactive_mode(
         // Embed the user's input
         let vector = vector_store.embed_text_to_vector(&input)?;
 
+        // Create the user prompt
+        let user_request = ChatCompletionRequestMessage {
+            role: Role::User,
+            content: Some(input.to_string()),
+            name: None,
+            function_call: None,
+        };
+
         // Query the VectorStore to get relevant content based on user's input
         let neighbors = vector_store.search(&vector, 5)?;  // Adjust the number of neighbors as needed
         for neighbor_id in neighbors {
             // Here, retrieve the actual content corresponding to neighbor_id and add it to Brain's memory
             // This requires a mechanism to map IDs to actual content, which needs to be implemented in the VectorStore or another appropriate place
             let neighbor_content = "";  // Placeholder, replace with actual content retrieval
-            brain.add_memory(Memory::new(neighbor_content.to_string()));
+            brain.add_memory(Memory::new(Role::User, neighbor_content.to_string()), &user_request, config);
         }
-
-        messages.push(ChatCompletionRequestMessage {
-            role: Role::User,
-            content: Some(input.to_string()),
-            name: None,
-            function_call: None,
-        });
 
         // Get the AI's response using the OpenAI API
         let response = match stream_response(

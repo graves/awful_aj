@@ -16,7 +16,7 @@
 //! ```
 
 use async_openai::types::ChatCompletionRequestMessage;
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use std::{error::Error, fs};
 use tracing::debug;
 

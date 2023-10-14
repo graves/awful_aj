@@ -1,4 +1,7 @@
-use std::collections::HashMap;  // Add this import for HashMap
+use std::collections::HashMap;
+use async_openai::types::ChatCompletionResponseMessage;
+use tiktoken_rs::async_openai::get_chat_completion_max_tokens;
+// Add this import for HashMap
 use hora::core::ann_index::ANNIndex;
 use hora::core::metrics::Metric;
 use hora::index::hnsw_idx::HNSWIndex;
@@ -8,12 +11,15 @@ use rust_bert::pipelines::sentence_embeddings::{
 };
 use regex::Regex;
 
+use crate::config::AwfulJadeConfig;
+use crate::Memory;
+
 pub struct VectorStore {
     index: HNSWIndex<f32, usize>,
     dimension: usize,
     model: SentenceEmbeddingsModel,
     current_id: usize,
-    id_to_content: HashMap<usize, String>,  // Added to hold the content mapping
+    id_to_memory: HashMap<usize, Memory>,  // Added to hold the content mapping
 }
 
 impl VectorStore {
@@ -33,11 +39,11 @@ impl VectorStore {
             dimension,
             model,
             current_id: 0,
-            id_to_content: HashMap::new(),  // Initialize the HashMap here
+            id_to_memory: HashMap::new(),  // Initialize the HashMap here
         })
     }
 
-    pub fn add_vector_with_content(&mut self, vector: Vec<f32>, content: String) -> Result<usize, &'static str> {
+    pub fn add_vector_with_content(&mut self, vector: Vec<f32>, memory: Memory) -> Result<usize, &'static str> {
         if vector.len() != self.dimension {
             return Err("Vector dimension does not match the index dimension.");
         }
@@ -47,15 +53,15 @@ impl VectorStore {
             .add(&vector, id)
             .map_err(|_| "Failed to add vector to the index.")?;
 
-        self.id_to_content.insert(id, content);  // Store the content associated with this vector
+        self.id_to_memory.insert(id, memory);  // Store the content associated with this vector
 
         self.current_id += 1;
 
         Ok(id)
     }
 
-    pub fn get_content_by_id(&self, id: usize) -> Option<&String> {
-        self.id_to_content.get(&id)
+    pub fn get_content_by_id(&self, id: usize) -> Option<&Memory> {
+        self.id_to_memory.get(&id)
     }
 
     pub fn build(&mut self) -> Result<(), &'static str> {
@@ -110,7 +116,11 @@ impl VectorStore {
     
         sentences
     }
-    
+
+    pub fn count_tokens(text: &Vec<ChatCompletionResponseMessage>, config: &AwfulJadeConfig) -> u16 {
+        let tokens_left = get_chat_completion_max_tokens("gpt-4", &messages).unwrap() as u16;
+        config.context_max_tokens - tokens_left
+    }
 }
 
 #[cfg(test)]

@@ -115,9 +115,12 @@ async fn handle_interactive_command(
     name: Option<String>,
 ) -> Result<(), Box<dyn Error>> {
     let conversation_name = name.unwrap_or_else(|| "default".to_string());
+    let template = template::load_template("default").await?;
     let vector_store = VectorStore::new(384).await?;
-    let brain = Brain::new(1000);
-    api::interactive_mode(&jade_config, conversation_name, vector_store, brain).await
+    let max_brain_token_percentage = 0.25;
+    let max_brain_tokens = (max_brain_token_percentage * jade_config.context_max_tokens as f32) as u16;
+    let brain = Brain::new(max_brain_tokens, &template);
+    api::interactive_mode(&jade_config, conversation_name, vector_store, brain, &template).await
 }
 
 /// # Determine Config Path

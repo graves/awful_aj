@@ -27,7 +27,6 @@ regex = "1.10.0"
 reqwest = "0.11.22"
 rust-bert = "0.21.0"
 serde = { version = "1.0.188", features = ["derive"]}
-serde_derive = "1.0.188"
 serde_json = "1.0.107"
 serde_yaml = "0.9.25"
 tempfile = "3.8.0"
