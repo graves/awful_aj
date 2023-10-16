@@ -70,7 +70,7 @@ pub async fn load_template(name: &str) -> Result<ChatTemplate, Box<dyn Error>> {
 
     debug!("Loading template: {}", config_dir.display());
 
-    let content = fs::read_to_string(path)?;
+    let content = fs::read_to_string(config_dir)?;
     let template: ChatTemplate = serde_yaml::from_str(&content)?;
 
     Ok(template)

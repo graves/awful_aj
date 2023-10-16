@@ -22,12 +22,12 @@ use vector_store::VectorStore;
 // A static OnceCell to hold the tracing subscriber, ensuring it is only initialized once.
 static TRACING: OnceCell<()> = OnceCell::new();
 
-/// # Main Function
+/// Main Function
 ///
 /// Initializes tracing and the asynchronous runtime, then runs the application.
 /// Any errors encountered during the run are propagated and displayed before exiting.
 ///
-/// ## Returns
+/// # Returns
 /// - `Result<(), Box<dyn Error>>`: Result type indicating success or error
 fn main() -> Result<(), Box<dyn Error>> {
     initialize_tracing();
@@ -36,7 +36,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-/// # Initialize Tracing
+/// Initialize Tracing
 ///
 /// Sets up the tracing subscriber for the application. This is used for logging
 /// and is only initialized once, thanks to the `OnceCell` holding it.
@@ -46,13 +46,13 @@ fn initialize_tracing() {
     });
 }
 
-/// # Run Function
+/// Run Function
 ///
 /// The core of the application, executed asynchronously. This function is responsible for
 /// parsing the command-line arguments, loading the configuration, and dispatching the
 /// commands to their appropriate handlers. Errors are propagated to the `main` function.
 ///
-/// ## Returns
+/// # Returns
 /// - `Result<(), Box<dyn Error>>`: Result type indicating success or error
 async fn run() -> Result<(), Box<dyn Error>> {
     let cli = commands::Cli::parse();
@@ -77,17 +77,17 @@ async fn run() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-/// # Handle Ask Command
+/// Handle Ask Command
 ///
 /// Processes the 'ask' command. Loads a template and the user's question (or a default one)
 /// and forwards them to the API for processing. The result is then handled as per the application's
 /// design.
 ///
-/// ## Parameters
+/// # Parameters
 /// - `jade_config: config::AwfulJadeConfig`: The configuration for Awful Jade
 /// - `question: Option<String>`: The question to be asked, or None to use a default question
 ///
-/// ## Returns
+/// # Returns
 /// - `Result<(), Box<dyn Error>>`: Result type indicating success or error
 async fn handle_ask_command(
     jade_config: config::AwfulJadeConfig,
@@ -98,17 +98,17 @@ async fn handle_ask_command(
     api::ask(&jade_config, question, template).await
 }
 
-/// # Handle Interactive Command
+/// Handle Interactive Command
 ///
 /// Manages the 'interactive' command. Sets up and enters the interactive mode, allowing the
 /// user to engage in a conversation with the AI model. The conversation can be named, and the
 /// vectors are stored for retrieval.
 ///
-/// ## Parameters
+/// # Parameters
 /// - `jade_config: config::AwfulJadeConfig`: The configuration for Awful Jade
 /// - `name: Option<String>`: The name of the conversation, or None to use a default name
 ///
-/// ## Returns
+/// # Returns
 /// - `Result<(), Box<dyn Error>>`: Result type indicating success or error
 async fn handle_interactive_command(
     jade_config: config::AwfulJadeConfig,
@@ -116,6 +116,7 @@ async fn handle_interactive_command(
 ) -> Result<(), Box<dyn Error>> {
     let conversation_name = name.unwrap_or_else(|| "default".to_string());
     let template = template::load_template("default").await?;
+    println!("TEMPLATE: {:?}", template);
     let vector_store = VectorStore::new(384).await?;
     let max_brain_token_percentage = 0.25;
     let max_brain_tokens =
@@ -131,13 +132,13 @@ async fn handle_interactive_command(
     .await
 }
 
-/// # Determine Config Path
+/// Determine Config Path
 ///
 /// Decides the path for the configuration file. If the application is in a test environment,
 /// it loads the config from the project directory. Otherwise, it uses the user's config directory.
 /// The distinction ensures that tests do not interfere with a user's actual configuration.
 ///
-/// ## Returns
+/// # Returns
 /// - `Result<PathBuf, Box<dyn Error>>`: The path to the configuration file or an error
 fn determine_config_path() -> Result<PathBuf, Box<dyn Error>> {
     if env::var("IN_TEST_ENVIRONMENT").is_ok() {
@@ -147,13 +148,13 @@ fn determine_config_path() -> Result<PathBuf, Box<dyn Error>> {
     }
 }
 
-/// # Initialization Function
+/// Initialization Function
 ///
 /// Handles the 'init' command. It is responsible for creating the necessary directories and
 /// files, and writing the default configuration and templates into them. It ensures that the
 /// application is ready for use, with all required setups completed.
 ///
-/// ## Returns
+/// # Returns
 /// - `Result<(), Box<dyn Error>>`: Result type indicating success or error
 fn init() -> Result<(), Box<dyn Error>> {
     let config_dir = config_dir()?;
@@ -209,10 +210,7 @@ fn main() -> io::Result<()> {
         model: "mistrel-7b-openorca".to_string(),
         context_max_tokens: 8192,
         assistant_minimum_context_tokens: 2048,
-        stop_words: vec![
-            "<|im_end|>\\n<|im_start|>".to_string(),
-            "\n<|im_start|>".to_string(),
-        ],
+        stop_words: vec!["\n<|im_start|>".to_string(), "<|im_end|>".to_string()],
     };
     let config_yaml = serde_yaml::to_string(&config)?;
     fs::write(config_path, config_yaml)?;
@@ -220,15 +218,15 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 
-/// # Create Default Template
+/// Create Default Template
 ///
 /// Generates the default chat template during the initialization process. It writes a predefined
 /// template to a file, ensuring that there's a starting point for the user to engage with the AI.
 ///
-/// ## Parameters
+/// # Parameters
 /// - `templates_dir: &Path`: The directory where the template will be stored
 ///
-/// ## Returns
+/// # Returns
 /// - `Result<(), Box<dyn Error>>`: Result type indicating success or error
 fn create_default_template(templates_dir: &std::path::Path) -> Result<(), Box<dyn Error>> {
     let default_template_path = templates_dir.join("default.yaml");
@@ -244,13 +242,13 @@ messages: []
     Ok(())
 }
 
-/// # Configuration Directory Retrieval
+/// Configuration Directory Retrieval
 ///
 /// Uses the `directories` crate to fetch the appropriate configuration directory based on the
 /// operating system. This ensures compatibility and adherence to the OS's directory structure
 /// and conventions.
 ///
-/// ## Returns
+/// # Returns
 /// - `Result<PathBuf, Box<dyn Error>>`: The path to the configuration directory or an error
 pub fn config_dir() -> Result<std::path::PathBuf, Box<dyn Error>> {
     let proj_dirs = ProjectDirs::from("com", "awful-security", "aj")

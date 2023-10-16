@@ -351,6 +351,7 @@ mod tests {
             model: "mock_model".to_string(),
             context_max_tokens: 8192,
             assistant_minimum_context_tokens: 2048,
+            stop_words: vec!["\n<|im_start|>".to_string(), "<|im_end|>".to_string()],
         }
     }
 
@@ -377,7 +378,7 @@ mod tests {
     #[tokio::test]
     async fn test_prepare_messages() {
         let template = mock_template();
-        let messages = prepare_messages(template).await;
+        let messages = prepare_messages(template);
         assert!(messages.is_ok(), "Failed to prepare messages");
         let messages = messages.unwrap();
         assert_eq!(messages.len(), 2, "Unexpected number of messages");
@@ -442,6 +443,7 @@ mod tests {
             model: "mock_model".to_string(),
             context_max_tokens: 8192,
             assistant_minimum_context_tokens: 2048,
+            stop_words: vec!["\n<|im_start|>".to_string(), "<|im_end|>".to_string()],
         };
         let question = "How do I write tests in Rust?".to_string();
         let template = mock_template();

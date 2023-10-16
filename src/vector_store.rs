@@ -131,6 +131,8 @@ impl VectorStore {
 
 #[cfg(test)]
 mod tests {
+    use async_openai::types::Role;
+
     use super::*;
 
     #[tokio::test]
@@ -147,7 +149,8 @@ mod tests {
 
         for sentence in &sentences {
             let vector = store.embed_text_to_vector(sentence)?;
-            store.add_vector_with_content(vector, sentence.clone().to_string())?;
+            let memory = Memory::new(Role::User, sentence.clone().to_string());
+            store.add_vector_with_content(vector, memory)?;
             // Fixed this line
         }
 
