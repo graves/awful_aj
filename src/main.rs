@@ -5,19 +5,19 @@
 
 // Importing necessary modules and libraries
 mod api;
+mod brain;
 mod commands;
 mod config;
 mod template;
 mod vector_store;
-mod brain;
 
+use brain::{Brain, Memory};
 use clap::Parser;
 use directories::ProjectDirs;
 use once_cell::sync::OnceCell;
 use std::{env, error::Error, fs, path::PathBuf};
 use tracing::{debug, info};
 use vector_store::VectorStore;
-use brain::{Brain, Memory};
 
 // A static OnceCell to hold the tracing subscriber, ensuring it is only initialized once.
 static TRACING: OnceCell<()> = OnceCell::new();
@@ -118,9 +118,17 @@ async fn handle_interactive_command(
     let template = template::load_template("default").await?;
     let vector_store = VectorStore::new(384).await?;
     let max_brain_token_percentage = 0.25;
-    let max_brain_tokens = (max_brain_token_percentage * jade_config.context_max_tokens as f32) as u16;
+    let max_brain_tokens =
+        (max_brain_token_percentage * jade_config.context_max_tokens as f32) as u16;
     let brain = Brain::new(max_brain_tokens, &template);
-    api::interactive_mode(&jade_config, conversation_name, vector_store, brain, &template).await
+    api::interactive_mode(
+        &jade_config,
+        conversation_name,
+        vector_store,
+        brain,
+        &template,
+    )
+    .await
 }
 
 /// # Determine Config Path
@@ -200,7 +208,11 @@ fn main() -> io::Result<()> {
         api_key: "CHANGEME".to_string(),
         model: "mistrel-7b-openorca".to_string(),
         context_max_tokens: 8192,
-        assistant_minimum_context_tokens: 2048
+        assistant_minimum_context_tokens: 2048,
+        stop_words: vec![
+            "<|im_end|>\\n<|im_start|>".to_string(),
+            "\n<|im_start|>".to_string(),
+        ],
     };
     let config_yaml = serde_yaml::to_string(&config)?;
     fs::write(config_path, config_yaml)?;
@@ -220,7 +232,10 @@ fn main() -> io::Result<()> {
 /// - `Result<(), Box<dyn Error>>`: Result type indicating success or error
 fn create_default_template(templates_dir: &std::path::Path) -> Result<(), Box<dyn Error>> {
     let default_template_path = templates_dir.join("default.yaml");
-    info!("Creating default template file: {}", default_template_path.display());
+    info!(
+        "Creating default template file: {}",
+        default_template_path.display()
+    );
     let default_template_content = r#"
 system_prompt: "Your name is Awful Jade, you are a helpful AI assistant programmed by Awful Security."
 messages: []

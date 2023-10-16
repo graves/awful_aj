@@ -133,6 +133,7 @@ async fn stream_response<'a>(
     let request = CreateChatCompletionRequestArgs::default()
         .max_tokens(max_tokens)
         .model(model)
+        .stop(config.stop_words.clone())
         .messages(messages)
         .build()?;
 

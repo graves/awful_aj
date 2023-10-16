@@ -3,3 +3,4 @@ api_key: "CHANGEME"
 model: "mistrel-7b-openorca"
 context_max_tokens: 8192
 assistant_minimum_context_tokens: 2048
+stop_words: ["<|im_end|>\\n<|im_start|>", "<|im_start|>\n"]
