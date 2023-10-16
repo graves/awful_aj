@@ -17,10 +17,10 @@
 //! let _ = ask(&config, question, template);
 //! ```
 use crate::{
+    brain::{Brain, Memory},
     config::AwfulJadeConfig,
-    template::{self, ChatTemplate},
+    template::ChatTemplate,
     vector_store::VectorStore,
-    brain::{self, Brain, Memory},
 };
 use async_openai::{
     config::OpenAIConfig,
@@ -28,7 +28,7 @@ use async_openai::{
     Client,
 };
 use crossterm::{
-    cursor::{MoveTo, RestorePosition, SavePosition},
+    cursor::MoveTo,
     style::{Attribute, Color, Print, SetAttribute, SetForegroundColor},
     ExecutableCommand,
 };
@@ -84,15 +84,14 @@ fn create_client(config: &AwfulJadeConfig) -> Result<Client<OpenAIConfig>, Box<d
 /// # Errors
 ///
 /// Returns an Error if there is a problem streaming the response or handling the output.
-async fn stream_response(
+async fn stream_response<'a>(
     client: &Client<OpenAIConfig>,
     model: String,
     mut messages: Vec<ChatCompletionRequestMessage>,
     config: &AwfulJadeConfig,
     mut vector_store: Option<&mut VectorStore>,
-    brain: Option<&mut Brain>,
+    _brain: Option<&mut Brain<'a>>,
 ) -> Result<ChatCompletionRequestMessage, Box<dyn Error>> {
-    let tokens_for_brain = (config.context_max_tokens as f32 * 0.25) as usize;  // 25% of the total tokens
     let mut max_tokens = get_chat_completion_max_tokens("gpt-4", &messages)? as u16;
     debug!("Max tokens: {}", max_tokens);
     let assistant_minimum_context_tokens = std::cmp::min(
@@ -204,12 +203,15 @@ pub async fn ask(
         name: None,
         function_call: None,
     });
-    let _response = stream_response(&client, config.model.clone(), messages, &config, None, None).await?;
+    let _response =
+        stream_response(&client, config.model.clone(), messages, &config, None, None).await?;
 
     Ok(())
 }
 
-fn prepare_messages(template: ChatTemplate) -> Result<Vec<ChatCompletionRequestMessage>, Box<dyn Error>> {
+fn prepare_messages(
+    template: ChatTemplate,
+) -> Result<Vec<ChatCompletionRequestMessage>, Box<dyn Error>> {
     let mut messages = vec![ChatCompletionRequestMessage {
         role: Role::System,
         content: Some(template.system_prompt.clone()),
@@ -238,12 +240,12 @@ fn prepare_messages(template: ChatTemplate) -> Result<Vec<ChatCompletionRequestM
 /// # Returns
 ///
 /// A result indicating the success or failure of the operation.
-pub async fn interactive_mode(
+pub async fn interactive_mode<'a>(
     config: &AwfulJadeConfig,
     conversation_name: String,
     mut vector_store: VectorStore,
-    mut brain: Brain,
-    template: &ChatTemplate,
+    mut brain: Brain<'a>,
+    _template: &ChatTemplate,
 ) -> Result<(), Box<dyn Error>> {
     // Display existing conversation history, or start a new conversation
     println!("Conversation: {}", conversation_name);
@@ -262,7 +264,7 @@ pub async fn interactive_mode(
             thread::sleep(Duration::from_millis(100)); // Adjust the delay as needed
         }
 
-         // Correct the cursor position after "You:"
+        // Correct the cursor position after "You:"
         let (x, y) = crossterm::cursor::position()?;
         let new_x = x + " ".len() as u16; // Calculate the new x position
         stdout.execute(MoveTo(new_x, y))?; // Move the cursor to the new position
@@ -292,13 +294,16 @@ pub async fn interactive_mode(
             function_call: None,
         };
 
+        messages.push(user_request.clone());
+
         // Query the VectorStore to get relevant content based on user's input
-        let neighbors = vector_store.search(&vector, 5)?;  // Adjust the number of neighbors as needed
+        let neighbors = vector_store.search(&vector, 3)?; // Adjust the number of neighbors as needed
         for neighbor_id in neighbors {
             // Here, retrieve the actual content corresponding to neighbor_id and add it to Brain's memory
             // This requires a mechanism to map IDs to actual content, which needs to be implemented in the VectorStore or another appropriate place
-            let neighbor_content = "";  // Placeholder, replace with actual content retrieval
-            brain.add_memory(Memory::new(Role::User, neighbor_content.to_string()), &user_request, config);
+            if let Some(neighbor_content) = vector_store.get_content_by_id(neighbor_id) {
+                brain.add_memory((*neighbor_content).clone(), &user_request, config);
+            }
         }
 
         // Get the AI's response using the OpenAI API
@@ -318,7 +323,7 @@ pub async fn interactive_mode(
                 continue; // This will skip the current iteration of the loop and proceed to the next one
             }
         };
-        
+
         messages.push(response);
     }
 

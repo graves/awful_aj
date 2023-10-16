@@ -1,5 +1,8 @@
 # aj
 
+[![crates.io](https://img.shields.io/crates/v/awful_aj.svg)](https://crates.io/crates/awful_aj)
+[![docs.rs](https://docs.rs/awful_aj/badge.svg)](https://docs.rs/awful_aj)
+
 `aj` is a command-line tool designed to facilitate the development of features on top of locally running Large Language Models (LLMs). It is specifically tailored to work seamlessly with the [Text Generation Web UI](https://github.com/oobabooga/text-generation-webui/) with the [OpenAI extension enabled](https://github.com/oobabooga/text-generation-webui/tree/main/extensions/openai), ensuring a smooth and efficient development experience without the need for complex configurations or setups.
 
 ![Awful Jade CLI tool logo](aj.png)
@@ -35,14 +38,16 @@ The configuration is stored in `~/.config/aj/config.yaml`. Update the `api_key` 
 ```yaml
 api_base: "http://localhost:5001/v1"
 api_key: "CHANGEME"
-model: "mistrel-7b-openorca"
+model: "mistral-7b-openorca"
+context_max_tokens: 8192
+assistant_minimum_context_tokens: 2048
 ```
 
 ### Asking Questions
 
 To ask a question, use the ask command followed by your question in quotes:
 ```sh
-aj ask "Is Bibi really from Philly?"
+aj ask "Is Bibi (Netanyahu) really from Philly?"
 ```
 
 If no question is provided, a default question is used.

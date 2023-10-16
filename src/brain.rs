@@ -2,13 +2,14 @@ use async_openai::types::{ChatCompletionRequestMessage, Role};
 use rust_bert::pipelines::conversation;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
-use std::collections::VecDeque;
 use std::collections::HashMap;
+use std::collections::VecDeque;
 
+use crate::config::AwfulJadeConfig;
 use crate::template::ChatTemplate;
 use crate::vector_store::VectorStore;
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Memory {
     role: Role,
     content: String,
@@ -26,55 +27,68 @@ impl Memory {
         })
     }
 
-    pub fn from_json(json: &JsonValue) -> Result<Self, serde_json::Error> {
+    pub fn _from_json(json: &JsonValue) -> Result<Self, serde_json::Error> {
         serde_json::from_value(json.clone())
     }
 }
 
-pub struct Brain {
+pub struct Brain<'a> {
     memories: VecDeque<Memory>,
     max_tokens: u16,
-    template: &ChatTemplate,
+    template: &'a ChatTemplate,
 }
 
-impl Brain {
-    pub fn new(max_tokens: u16, template: &ChatTemplate) -> Self {
+impl<'a> Brain<'a> {
+    pub fn new(max_tokens: u16, template: &'a ChatTemplate) -> Self {
         Self {
             memories: VecDeque::<Memory>::new(),
             max_tokens,
-            template
+            template,
         }
     }
 
-    pub fn add_memory(&mut self, memory: Memory, user_request_message: &ChatCompletionRequestMessage, config: &AwfulJadeConfig) {
-        self.memories.push(memory);
+    pub fn add_memory(
+        &mut self,
+        memory: Memory,
+        user_request_message: &ChatCompletionRequestMessage,
+        config: &AwfulJadeConfig,
+    ) {
+        self.memories.push_back(memory);
         self.enforce_token_limit(&user_request_message, config);
     }
 
-    fn enforce_token_limit(&mut self, user_request_message: &ChatCompletionRequestMessage, config: &AwfulJadeConfig) {
-        let conversation = self.build_preamble().expect("Failed to build preamble");
-        conversation.push(*user_request_message);
+    fn enforce_token_limit(
+        &mut self,
+        user_request_message: &ChatCompletionRequestMessage,
+        config: &AwfulJadeConfig,
+    ) {
+        let mut conversation = self.build_preamble().expect("Failed to build preamble");
+        conversation.push((*user_request_message).clone());
 
-        let token_count = VectorStore::count_tokens(conversation, config);
+        let token_count = VectorStore::count_tokens(&conversation, &config);
         if token_count > self.max_tokens {
-            while VectorStore::count_tokens(conversation, config) > self.max_tokens 
-                && !self.memories.is_empty() {
-                self.memories.remove(0);  // Removing the oldest memory
+            while VectorStore::count_tokens(&conversation, &config) > self.max_tokens
+                && !self.memories.is_empty()
+            {
+                self.memories.remove(0); // Removing the oldest memory
                 conversation = self.build_preamble().expect("Failed to build preamble");
-                conversation.push(*user_request_message);
+                conversation.push((*user_request_message).clone());
             }
         }
     }
 
     pub fn get_serialized(&self) -> String {
         let about = "This JSON object is a representation of our conversation leading up to this point. This object represents your memories.";
-    
+
         let mut map = HashMap::new();
         map.insert("about", JsonValue::String(about.into()));
-        map.insert("memories", JsonValue::Array(self.memories.iter().map(|m| m.to_json()).collect()));
-    
+        map.insert(
+            "memories",
+            JsonValue::Array(self.memories.iter().map(|m| m.to_json()).collect()),
+        );
+
         let body = "Below is a JSON representation of our conversation leading up to this point. Please only respond to this message with \"Ok.\":\n";
-    
+
         format!(
             "{}{}",
             body,

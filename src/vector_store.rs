@@ -1,15 +1,14 @@
-use std::collections::HashMap;
-use async_openai::types::ChatCompletionResponseMessage;
-use tiktoken_rs::async_openai::get_chat_completion_max_tokens;
-// Add this import for HashMap
+use async_openai::types::ChatCompletionRequestMessage;
 use hora::core::ann_index::ANNIndex;
 use hora::core::metrics::Metric;
 use hora::index::hnsw_idx::HNSWIndex;
 use hora::index::hnsw_params::HNSWParams;
+use regex::Regex;
 use rust_bert::pipelines::sentence_embeddings::{
     SentenceEmbeddingsBuilder, SentenceEmbeddingsModel, SentenceEmbeddingsModelType,
 };
-use regex::Regex;
+use std::collections::HashMap;
+use tiktoken_rs::async_openai::get_chat_completion_max_tokens;
 
 use crate::config::AwfulJadeConfig;
 use crate::Memory;
@@ -19,7 +18,7 @@ pub struct VectorStore {
     dimension: usize,
     model: SentenceEmbeddingsModel,
     current_id: usize,
-    id_to_memory: HashMap<usize, Memory>,  // Added to hold the content mapping
+    id_to_memory: HashMap<usize, Memory>, // Added to hold the content mapping
 }
 
 impl VectorStore {
@@ -39,11 +38,15 @@ impl VectorStore {
             dimension,
             model,
             current_id: 0,
-            id_to_memory: HashMap::new(),  // Initialize the HashMap here
+            id_to_memory: HashMap::new(), // Initialize the HashMap here
         })
     }
 
-    pub fn add_vector_with_content(&mut self, vector: Vec<f32>, memory: Memory) -> Result<usize, &'static str> {
+    pub fn add_vector_with_content(
+        &mut self,
+        vector: Vec<f32>,
+        memory: Memory,
+    ) -> Result<usize, &'static str> {
         if vector.len() != self.dimension {
             return Err("Vector dimension does not match the index dimension.");
         }
@@ -53,7 +56,7 @@ impl VectorStore {
             .add(&vector, id)
             .map_err(|_| "Failed to add vector to the index.")?;
 
-        self.id_to_memory.insert(id, memory);  // Store the content associated with this vector
+        self.id_to_memory.insert(id, memory); // Store the content associated with this vector
 
         self.current_id += 1;
 
@@ -95,29 +98,32 @@ impl VectorStore {
         let mut sentences = Vec::new();
         let code_block_re = Regex::new(r"```([^`]+)```").unwrap();
         let sentence_re = Regex::new(r"(?s)[^.!?]+[.!?]").unwrap();
-    
+
         // Extract code blocks as whole sentences
         let remaining_text = code_block_re.replace_all(text, |caps: &regex::Captures| {
             sentences.push(caps[1].trim().to_string());
-            "".to_string()  // Remove code block content from the remaining text
+            "".to_string() // Remove code block content from the remaining text
         });
-    
+
         // Extract regular sentences from the non-code-block part of the text
         for cap in sentence_re.captures_iter(&remaining_text) {
             sentences.push(cap[0].trim().to_string());
         }
-    
+
         // Check if there is an incomplete sentence at the end and add it to the sentences vector
         if let Some(last_char) = remaining_text.chars().last() {
             if last_char != '.' && last_char != '?' && last_char != '!' {
                 sentences.push(remaining_text.trim().to_string());
             }
         }
-    
+
         sentences
     }
 
-    pub fn count_tokens(text: &Vec<ChatCompletionResponseMessage>, config: &AwfulJadeConfig) -> u16 {
+    pub fn count_tokens(
+        messages: &Vec<ChatCompletionRequestMessage>,
+        config: &AwfulJadeConfig,
+    ) -> u16 {
         let tokens_left = get_chat_completion_max_tokens("gpt-4", &messages).unwrap() as u16;
         config.context_max_tokens - tokens_left
     }
@@ -141,7 +147,8 @@ mod tests {
 
         for sentence in &sentences {
             let vector = store.embed_text_to_vector(sentence)?;
-            store.add_vector_with_content(vector, sentence.clone().to_string())?;  // Fixed this line
+            store.add_vector_with_content(vector, sentence.clone().to_string())?;
+            // Fixed this line
         }
 
         store.build()?;

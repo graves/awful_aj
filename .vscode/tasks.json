@@ -4,7 +4,7 @@
         {
             "label": "build",
             "type": "shell",
-            "command": "source $nu.config-path; cargo build",
+            "command": "source $nu.config-path; conda activate base; cargo build",
             "options": {
                 "env": {
                     "LIBTORCH": "/opt/homebrew/Caskroom/miniconda/base/lib/python3.11/site-packages/torch",
