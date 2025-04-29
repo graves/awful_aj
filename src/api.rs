@@ -1,20 +1,20 @@
+//! # API Module
+//!
 //! This module handles interactions with the OpenAI API for asking questions and receiving responses.
 //!
-//! It provides functions to create a client, prepare messages, and stream responses from the API.
-//! The responses from the OpenAI API are printed in bold blue text to the console.
+//! It provides functions to create a client, prepare session messages, add memories,
+//! stream AI responses, and manage an interactive user conversation.
 //!
 //! # Example
 //!
 //! ```no_run
 //! use awful_aj::{AwfulJadeConfig, ChatTemplate, ask};
 //!
-//! // Load your configuration and template, and prepare your question
 //! let config = AwfulJadeConfig::new(/* ... */);
 //! let template = ChatTemplate::new(/* ... */);
 //! let question = "What is the meaning of life?".to_string();
 //!
-//! // Ask a question using the OpenAI API
-//! let _ = ask(&config, question, template);
+//! let _ = ask(&config, question, &template, None, None);
 //! ```
 use crate::{
     brain::{Brain, Memory},
@@ -44,19 +44,13 @@ use std::{
 
 use tracing::{debug, error};
 
-/// Creates a new OpenAI client using the provided configuration.
+/// Creates a new OpenAI API client from configuration.
 ///
-/// # Arguments
-///
-/// * `config` - A reference to the configuration object containing the API key and base URL.
+/// # Parameters
+/// - `config: &AwfulJadeConfig`: Configuration containing API base and key.
 ///
 /// # Returns
-///
-/// A Result containing the created client if successful, otherwise returns an Error.
-///
-/// # Errors
-///
-/// Returns an Error if there is a problem creating the client.
+/// - `Result<Client<OpenAIConfig>, Box<dyn Error>>`: Created client or an error if initialization fails.
 fn create_client(config: &AwfulJadeConfig) -> Result<Client<OpenAIConfig>, Box<dyn Error>> {
     let openai_config = OpenAIConfig::new()
         .with_api_key(config.api_key.clone())
@@ -65,27 +59,20 @@ fn create_client(config: &AwfulJadeConfig) -> Result<Client<OpenAIConfig>, Box<d
     Ok(Client::with_config(openai_config))
 }
 
-/// Streams the response from the OpenAI API and prints it to the console in bold blue text.
+/// Streams the assistant's response from OpenAI and prints it to the console with formatting.
 ///
-/// This function also ensures that the assistant has a minimum number of tokens to generate a response
-/// by ejecting older messages if necessary. The system message is never ejected.
+/// If the conversation exceeds the token budget, older messages are ejected and stored.
 ///
-/// # Arguments
-///
-/// * `client` - A reference to the OpenAI client.
-/// * `model` - A string containing the model name.
-/// * `messages` - A mutable vector of messages for the chat completion request.
-///                This vector may be modified to ensure the assistant has enough tokens to generate a response.
-/// * `config` - A reference to the configuration containing various settings including token limits.
+/// # Parameters
+/// - `client: &Client<OpenAIConfig>`: OpenAI client.
+/// - `model: String`: Model name to use.
+/// - `session_messages: &mut SessionMessages`: Session messages for this chat.
+/// - `config: &AwfulJadeConfig`: Application configuration.
+/// - `vector_store: Option<&mut VectorStore>`: Optional vector store for long-term memory.
+/// - `brain: Option<&mut Brain<'a>>`: Optional brain for managing session memory.
 ///
 /// # Returns
-///
-/// A Result containing a new chat completion request message to add to the conversation if successful,
-/// otherwise returns an Error.
-///
-/// # Errors
-///
-/// Returns an Error if there is a problem streaming the response or handling the output.
+/// - `Result<ChatCompletionRequestMessage, Box<dyn Error>>`: The assistant's response message.
 async fn stream_response<'a>(
     client: &Client<OpenAIConfig>,
     model: String,
@@ -175,20 +162,17 @@ async fn stream_response<'a>(
     })
 }
 
-/// Asks a question using the OpenAI API and prints the response.
-///
-/// This function handles the entire process of asking a question via the OpenAI API, including creating the client,
-/// preparing messages, streaming the response, and handling errors.
+/// Asks a single question using the OpenAI API and processes the response.
 ///
 /// # Parameters
-///
-/// - `config`: The configuration containing the API key, base URL, and model name.
-/// - `question`: The question to be asked.
-/// - `template`: The chat template containing the system prompt and initial messages.
+/// - `config: &AwfulJadeConfig`: Configuration for the API client.
+/// - `question: String`: The user's input question.
+/// - `template: &ChatTemplate`: Template used to construct the system prompt.
+/// - `vector_store: Option<&mut VectorStore>`: Optional vector store.
+/// - `brain: Option<&mut Brain<'a>>`: Optional session brain.
 ///
 /// # Returns
-///
-/// A result indicating the success or failure of the operation.
+/// - `Result<(), Box<dyn Error>>`: Success or error.
 pub async fn ask<'a>(
     config: &AwfulJadeConfig,
     question: String,
@@ -227,6 +211,19 @@ pub async fn ask<'a>(
     Ok(())
 }
 
+/// Prepares session messages for a new or ongoing session based on provided configuration.
+///
+/// If a session already exists, it loads historical messages from the database.
+/// Otherwise, it constructs messages using the brain's memories and template.
+///
+/// # Parameters
+/// - `brain: &Option<&mut Brain>`: Optional brain for memory retrieval.
+/// - `config: &AwfulJadeConfig`: Application configuration.
+/// - `template: &ChatTemplate`: Chat prompt and message template.
+/// - `question: &String`: User's input question.
+///
+/// # Returns
+/// - `Result<SessionMessages, Box<dyn Error>>`: Prepared session messages.
 fn get_session_messages(
     brain: &Option<&mut Brain>,
     config: &AwfulJadeConfig,
@@ -279,6 +276,19 @@ fn get_session_messages(
     Ok(session_messages)
 }
 
+/// Adds relevant memories from the vector store into the brain based on a query.
+///
+/// Retrieves nearest neighbors to the query, verifies distance thresholds, and injects
+/// their contents into the brain's working memory.
+///
+/// # Parameters
+/// - `vector_store: &Option<&mut VectorStore>`: Vector store for retrieval.
+/// - `question: &String`: Query to retrieve relevant memories.
+/// - `session_messages: &mut SessionMessages`: Session context.
+/// - `brain: &mut Option<&mut Brain>`: Brain to update with memories.
+///
+/// # Returns
+/// - `Result<(), Box<dyn Error>>`: Success or error.
 fn add_memories_to_brain(
     vector_store: &Option<&mut VectorStore>,
     question: &String,
@@ -317,6 +327,17 @@ fn add_memories_to_brain(
     Ok(())
 }
 
+/// Constructs session messages for a new conversation (no existing session).
+///
+/// This includes the brain's preamble and any messages specified in the template.
+///
+/// # Parameters
+/// - `template: &ChatTemplate`: Chat prompt template.
+/// - `config: &AwfulJadeConfig`: Application configuration.
+/// - `brain: &Brain`: Brain containing working memory.
+///
+/// # Returns
+/// - `Result<SessionMessages, Box<dyn Error>>`: Prepared session messages.
 fn prepare_messages(
     template: &ChatTemplate,
     config: &AwfulJadeConfig,
@@ -338,6 +359,18 @@ fn prepare_messages(
 
 use crate::models::*;
 use diesel::prelude::*;
+/// Constructs session messages for an existing session.
+///
+/// Loads the conversation history from the database if available, otherwise falls back
+/// to a new session initialization.
+///
+/// # Parameters
+/// - `template: &ChatTemplate`: Chat prompt template.
+/// - `config: &AwfulJadeConfig`: Application configuration.
+/// - `brain: &Brain`: Brain containing working memory.
+///
+/// # Returns
+/// - `Result<SessionMessages, Box<dyn Error>>`: Prepared session messages.
 fn prepare_messages_for_existing_session(
     template: &ChatTemplate,
     config: &AwfulJadeConfig,
@@ -417,20 +450,19 @@ fn prepare_messages_for_existing_session(
     }
 }
 
-/// Handles the interactive mode where the user can continuously ask questions and receive responses.
+/// Enters interactive conversation mode with the assistant.
 ///
-/// This function facilitates an interactive conversation with the OpenAI API. It uses a loop to allow the user
-/// to ask multiple questions and receive responses until the user decides to exit.
+/// Allows the user to engage in a continuous session, sending multiple inputs and
+/// receiving responses, until they exit by typing "exit".
 ///
 /// # Parameters
-///
-/// - `config`: The configuration containing the API key, base URL, and model name.
-/// - `conversation_name`: The name of the conversation.
-/// - `vector_store`: The vector store for managing and storing vectors.
+/// - `config: &AwfulJadeConfig`: Application configuration.
+/// - `vector_store: VectorStore`: Store for embeddings and past memories.
+/// - `brain: Brain<'a>`: Brain managing the session.
+/// - `template: &ChatTemplate`: Chat template to use.
 ///
 /// # Returns
-///
-/// A result indicating the success or failure of the operation.
+/// - `Result<(), Box<dyn Error>>`: Success or error.
 pub async fn interactive_mode<'a>(
     config: &AwfulJadeConfig,
     mut vector_store: VectorStore,

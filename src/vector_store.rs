@@ -1,3 +1,9 @@
+//! # VectorStore Module
+//!
+//! This module provides functionality to store, serialize, deserialize, and search
+//! high-dimensional vectors associated with user content. It supports building,
+//! maintaining, and querying a nearest-neighbor search index for fast retrieval.
+
 use hora::core::ann_index::{ANNIndex, SerializableIndex};
 use hora::core::metrics::Metric;
 use hora::index::hnsw_idx::HNSWIndex;
@@ -13,12 +19,25 @@ use std::path::PathBuf;
 
 use crate::{config_dir, Memory};
 
+/// A persistent vector database for mapping high-dimensional vectors to associated memory content.
+///
+/// `VectorStore` uses a HNSW index for approximate nearest neighbor (ANN) searches
+/// and a transformer-based sentence embedding model to convert text into vectors.
+///
+/// It supports serialization, deserialization, building the search index,
+/// and associating user messages or context with vectors.
 pub struct VectorStore {
+    /// Internal HNSWIndex for fast vector similarity search.
     pub index: HNSWIndex<f32, usize>,
+    /// Dimensionality of vectors stored in the index.
     dimension: usize,
+    /// Model used to embed text into vector representations.
     model: SentenceEmbeddingsModel,
+    /// Counter used to assign a unique ID to each inserted vector.
     current_id: usize,
-    id_to_memory: HashMap<usize, Memory>, // Added to hold the content mapping,
+    /// Mapping of vector IDs to their corresponding memory content.
+    id_to_memory: HashMap<usize, Memory>,
+    /// A UUID derived from the session name for consistent serialization.
     uuid: u64
 }
 
@@ -27,11 +46,11 @@ impl Serialize for VectorStore {
     where
         S: Serializer,
     {
-        // 3 is the number of fields in the struct.
+
         let mut state = serializer.serialize_struct("VectorStore", 6)?;
         state.serialize_field("index", &self.index)?;
         state.serialize_field("dimension", &self.dimension)?;
-        state.serialize_field("model", &0)?;
+        state.serialize_field("model", &0)?; // Model is not serialized
         state.serialize_field("current_id", &self.current_id)?;
         state.serialize_field("id_to_memory", &self.id_to_memory)?;
         state.serialize_field("uuid", &self.uuid)?;
@@ -44,6 +63,7 @@ use std::{fmt, fs};
 use serde::de::{self, Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
 
 impl<'de> Deserialize<'de> for VectorStore {
+    /// Custom serializer for `VectorStore`, storing essential fields while skipping the model.
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -202,6 +222,14 @@ impl<'de> Deserialize<'de> for VectorStore {
 }
 
 impl VectorStore {
+    /// Create a new `VectorStore`.
+    ///
+    /// # Parameters
+    /// - `dimension: usize`: Dimensionality of vectors to be stored.
+    /// - `the_session_name: String`: Session name used to generate a unique identifier.
+    ///
+    /// # Returns
+    /// - `Result<Self, Box<dyn Error>>`: Initialized VectorStore or error.
     pub fn new(dimension: usize, the_session_name: String) -> Result<Self, Box<dyn std::error::Error>> {
         let params = HNSWParams::default();
         let index = HNSWIndex::new(dimension, &params);
@@ -225,6 +253,14 @@ impl VectorStore {
         })
     }
 
+    /// Serialize the vector store, saving the HNSW index and associated metadata to disk.
+    ///
+    /// # Parameters
+    /// - `vector_store_path: &PathBuf`: Path to save the serialized metadata (YAML file).
+    /// - `the_session_name: String`: Name of the session for consistent UUID generation.
+    ///
+    /// # Returns
+    /// - `Result<(), Box<dyn Error>>`: Success or failure.
     pub fn serialize(&mut self, vector_store_path: &PathBuf, the_session_name: String) -> Result<(), Box<dyn Error>> {
         let digest = sha256::digest(the_session_name);
         let mut uuid: u64 = 0;
@@ -243,6 +279,17 @@ impl VectorStore {
         Ok(())
     }
 
+    /// Reconstruct a `VectorStore` from serialized data.
+    ///
+    /// # Parameters
+    /// - `_index: HNSWIndex<f32, usize>`: Ignored (reloaded from file based on UUID).
+    /// - `dimension: usize`: Vector dimensionality.
+    /// - `current_id: usize`: Current ID counter.
+    /// - `id_to_memory: HashMap<usize, Memory>`: ID-to-memory mapping.
+    /// - `uuid: u64`: Unique identifier associated with the session.
+    ///
+    /// # Returns
+    /// - `Result<Self, Box<dyn Error>>`: Reconstructed VectorStore or error.
     pub fn from_serialized(
         _index: HNSWIndex<f32, usize>,
         dimension: usize,
@@ -268,6 +315,14 @@ impl VectorStore {
         })
     }
 
+    /// Add a new vector and associated memory to the store.
+    ///
+    /// # Parameters
+    /// - `vector: Vec<f32>`: The embedded vector representation.
+    /// - `memory: Memory`: The associated memory/content to store.
+    ///
+    /// # Returns
+    /// - `Result<usize, &'static str>`: ID of the inserted vector or error if duplicate or dimension mismatch.
     pub fn add_vector_with_content(
         &mut self,
         vector: Vec<f32>,
@@ -308,16 +363,35 @@ impl VectorStore {
         }
     }
 
+    /// Retrieve memory content associated with a given vector ID.
+    ///
+    /// # Parameters
+    /// - `id: usize`: The ID of the memory.
+    ///
+    /// # Returns
+    /// - `Option<&Memory>`: Reference to memory if found, otherwise `None`.
     pub fn get_content_by_id(&self, id: usize) -> Option<&Memory> {
         self.id_to_memory.get(&id)
     }
 
+    /// Build the underlying HNSW index to optimize nearest neighbor searches.
+    ///
+    /// # Returns
+    /// - `Result<(), &'static str>`: Success or error if the build fails.
     pub fn build(&mut self) -> Result<(), &'static str> {
         self.index
             .build(Metric::Euclidean)
             .map_err(|_| "Failed to build the index.")
     }
 
+    /// Perform a nearest neighbor search for a given vector.
+    ///
+    /// # Parameters
+    /// - `vector: &[f32]`: Query vector.
+    /// - `top_k: usize`: Number of top similar neighbors to return.
+    ///
+    /// # Returns
+    /// - `Result<Vec<usize>, &'static str>`: List of matching vector IDs or error.
     pub fn search(&self, vector: &[f32], top_k: usize) -> Result<Vec<usize>, &'static str> {
         if vector.len() != self.dimension {
             return Err("Query vector dimension does not match the index dimension.");
@@ -326,6 +400,13 @@ impl VectorStore {
         Ok(self.index.search(vector, top_k))
     }
 
+    /// Embed a given text into a vector representation using the loaded model.
+    ///
+    /// # Parameters
+    /// - `text: &str`: Input text to be embedded.
+    ///
+    /// # Returns
+    /// - `Result<Vec<f32>, Box<dyn Error>>`: Embedded vector or error.
     pub fn embed_text_to_vector(&self, text: &str) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
         // Put your text into an array (you can add more sentences if needed)
         let sentences: Vec<String> = Self::tokenize_sentences(text);
@@ -340,6 +421,15 @@ impl VectorStore {
         Ok(embedding_vector)
     }
 
+    /// Tokenize text into sentences, extracting code blocks and individual sentences separately.
+    ///
+    /// This function preserves code blocks and standard sentences for more meaningful embeddings.
+    ///
+    /// # Parameters
+    /// - `text: &str`: Input text to tokenize.
+    ///
+    /// # Returns
+    /// - `Vec<String>`: List of extracted sentences.
     pub fn tokenize_sentences(text: &str) -> Vec<String> {
         let mut sentences = Vec::new();
         let code_block_re = Regex::new(r"```([^`]+)```").unwrap();
@@ -366,6 +456,14 @@ impl VectorStore {
         sentences
     }
 
+    /// Calculate the Euclidean distance between two vectors.
+    ///
+    /// # Parameters
+    /// - `a: Vec<f32>`: First vector.
+    /// - `b: Vec<f32>`: Second vector.
+    ///
+    /// # Returns
+    /// - `f32`: Euclidean distance.
     pub fn calc_euclidean_distance(a: Vec<f32>, b: Vec<f32>) -> f32 {
         let distance = a
             .iter()
