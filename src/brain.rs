@@ -8,17 +8,34 @@ use std::collections::VecDeque;
 use crate::session_messages::SessionMessages;
 use crate::template::ChatTemplate;
 
+/// Memory Struct
+///
+/// Represents a single memory entry in the brain. It holds the role and content of a message.
+///
+/// # Example
+/// ```rust
+/// use awful_security::brain::Memory;
+/// let memory = Memory::new(Role::User, "Hello, how are you?".to_string());
+/// assert_eq!(memory.role, Role::User);
+/// assert_eq!(memory.content, "Hello, how are you?".to_string());
+/// ```
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Memory {
-    role: Role,
-    content: String,
+    /// The role of the memory. Can be User, Assistant, or System.
+    pub role: Role,
+
+    /// The content of the message.
+    pub content: String,
 }
 
+/// Memory Implementation
 impl Memory {
+    /// Creates a new instance of `Memory`.
     pub fn new(role: Role, content: String) -> Self {
         Self { role, content }
     }
 
+    /// Converts the `Memory` instance to JSON format.
     pub fn to_json(&self) -> JsonValue {
         serde_json::json!({
             "role": self.role,
@@ -26,17 +43,28 @@ impl Memory {
         })
     }
 
+    /// Deserializes JSON into a `Memory` instance.
     pub fn _from_json(json: &JsonValue) -> Result<Self, serde_json::Error> {
         serde_json::from_value(json.clone())
     }
 }
-
+/// Brain Struct
+///
+/// Represents the brain of the AI model. It holds a vector deque of memories, a limit on the
+/// number of tokens, and a reference to the chat template.
+#[derive(Debug)]
 pub struct Brain<'a> {
-    memories: VecDeque<Memory>,
-    max_tokens: u16,
-    template: &'a ChatTemplate,
+    /// The list of memories in the brain. Kept in a vector deque for efficient push and pop operations.
+    pub memories: VecDeque<Memory>,
+
+    /// The maximum number of tokens allowed in the brain.
+    pub max_tokens: u16,
+
+    /// A reference to the chat template.
+    pub template: &'a ChatTemplate,
 }
 
+/// Brain Implementation
 impl<'a> Brain<'a> {
     pub fn new(max_tokens: u16, template: &'a ChatTemplate) -> Self {
         Self {
@@ -46,11 +74,16 @@ impl<'a> Brain<'a> {
         }
     }
 
+    /// Adds a `Memory` instance to the brain. Also enforces the token limit and updates the
+    /// preamble messages if necessary.
     pub fn add_memory(&mut self, memory: Memory, session_messages: &mut SessionMessages) {
         self.memories.push_back(memory);
         self.enforce_token_limit(session_messages);
     }
 
+    /// Enforces the token limit in the brain. If the limit is exceeded, it removes memories from
+    /// the oldest to the newest until the limit is met. It also updates the preamble messages
+    /// if necessary.
     fn enforce_token_limit(&mut self, session_messages: &mut SessionMessages) {
         tracing::info!("Enforcing token limit.");
         let bpe = cl100k_base().unwrap();
@@ -64,6 +97,8 @@ impl<'a> Brain<'a> {
         }
     }
 
+    /// Converts the brain into JSON format. It includes information about the conversation
+    /// memories and is designed to be responded to by the user with an "Ok" message.
     pub fn get_serialized(&self) -> String {
         let about = "This JSON object is a representation of our conversation leading up to this point. This object represents your memories.";
 
@@ -83,6 +118,8 @@ impl<'a> Brain<'a> {
         )
     }
 
+    /// Builds the preamble messages for the AI model. Includes a system prompt, the brain state as
+    /// JSON and an "Ok" message. Used for initialization of further conversations with the AI.
     pub fn build_preamble(&self) -> Result<Vec<ChatCompletionRequestMessage>, &'static str> {
         let mut messages: Vec<ChatCompletionRequestMessage> = vec![ChatCompletionRequestMessage {
             role: Role::System,

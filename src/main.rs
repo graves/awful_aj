@@ -20,7 +20,7 @@ use brain::{Brain, Memory};
 use clap::Parser;
 use directories::ProjectDirs;
 use once_cell::sync::OnceCell;
-use std::{env, error::Error, fs, path::PathBuf};
+use std::{env, error::Error, fs, path::PathBuf, vec};
 use tracing::{debug, info};
 use vector_store::VectorStore;
 
@@ -111,8 +111,10 @@ async fn handle_ask_command(
     let template_name = template_name.unwrap_or_else(|| "simple_question".to_string());
     let template = template::load_template(&template_name).await?;
 
-    let vector_store_path = config_dir()?.join("vector_store.yaml");
-
+    let the_session_name = jade_config.session_name.clone().unwrap();
+    let digest = sha256::digest(&the_session_name);
+    let vector_store_name = format!("{}_vector_store.yaml", digest);
+    let vector_store_path = config_dir()?.join(vector_store_name);
     let vector_store_string = fs::read_to_string(&vector_store_path);
 
     let mut vector_store: VectorStore = if vector_store_string.is_ok() {
@@ -155,8 +157,11 @@ async fn handle_interactive_command(
     let template_name = template_name.unwrap_or_else(|| "simple_question".to_string());
     let template = template::load_template(&template_name).await?;
 
-    let vector_store_path = config_dir()?.join("vector_store.yaml");
 
+    let the_session_name = jade_config.session_name.clone().unwrap();
+    let digest = sha256::digest(&the_session_name);
+    let vector_store_name = format!("{}_vector_store.yaml", digest);
+    let vector_store_path = config_dir()?.join(vector_store_name);
     let vector_store_string = fs::read_to_string(&vector_store_path);
 
     let vector_store: VectorStore = if vector_store_string.is_ok() {

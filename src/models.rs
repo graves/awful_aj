@@ -1,3 +1,17 @@
+// Models section
+//
+// These models represent the data structures used within the application.
+// They are associated with a SQL table and use Diesel's powerful features for database interaction.
+//
+// Note: Identifier Override on `AwfulConfig` and `Conversation` has been modified to
+// fit into the inherent `Associatable` trait.
+// Note: Foreign Key Connection for `AwfulConfig` is done via the `ForeignKey` trait.
+// Note: Associations for Model are derived from Diesel's `Associations` trait.
+// Note: Crucial Model initialization is done via the Diesel `Active` trait for
+// Models in the main section. This is used when creating the model instances
+// in the database. Furthermore, the `Serde` and `Cloning` traits are used to
+// interact with them. The `Id` trait is also used for efficiency-related interactions.
+// Models are in the main 
 use diesel::prelude::*;
 
 #[derive(Queryable, Associations, Insertable, PartialEq, Debug)]
