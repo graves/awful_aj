@@ -1,6 +1,6 @@
 [package]
 name = "awful_aj"
-version = "0.1.3"
+version = "0.2.0"
 edition = "2021"
 authors = ["Thomas Gentry <thomas@awfulsec.com>"]
 description = "A CLI for interacting with OpenAI compatible APIs"
@@ -8,7 +8,7 @@ license = "MIT"
 repository = "https://github.com/graves/awful_aj.git"
 readme = "README.md"
 homepage = "https://github.com/graves/awful_aj"
-keywords = ["openai", "gpt3", "cli", "api"]
+keywords = ["openai", "gpt3", "cli", "api", "vector database"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [[bin]]
