@@ -4,12 +4,17 @@
 //! configuration loading, and command execution based on user input from the command line.
 
 // Importing necessary modules and libraries
+extern crate diesel;
+
 mod api;
 mod brain;
 mod commands;
 mod config;
 mod template;
 mod vector_store;
+mod session_messages;
+pub mod models;
+pub mod schema;
 
 use brain::{Brain, Memory};
 use clap::Parser;
@@ -57,16 +62,25 @@ fn initialize_tracing() {
 async fn run() -> Result<(), Box<dyn Error>> {
     let cli = commands::Cli::parse();
     let config_path = determine_config_path()?;
-    let jade_config = config::load_config(config_path.to_str().unwrap())?;
+    let mut jade_config = config::load_config(config_path.to_str().unwrap())?;
+
+    info!("CONFIG BEFORE ENSURE: {:?}", jade_config);
 
     match cli.command {
-        commands::Commands::Ask { question } => {
-            debug!("Asking question: {:?}", question);
-            handle_ask_command(jade_config, question).await?;
+        commands::Commands::Ask { question, template , session} => {  
+            debug!("Entering ask mode");          
+            if session.is_some() {
+                jade_config.ensure_conversation_and_config(&session.unwrap()).await?;
+            }
+
+            handle_ask_command(jade_config, question, template).await?;
         }
-        commands::Commands::Interactive { name } => {
+        commands::Commands::Interactive { template , session } => {
             debug!("Entering interactive mode");
-            handle_interactive_command(jade_config, name).await?;
+            if session.is_some() {
+                jade_config.ensure_conversation_and_config(&session.unwrap()).await?;
+            }
+            handle_interactive_command(jade_config, template).await?;
         }
         commands::Commands::Init => {
             debug!("Initializing configuration");
@@ -92,10 +106,34 @@ async fn run() -> Result<(), Box<dyn Error>> {
 async fn handle_ask_command(
     jade_config: config::AwfulJadeConfig,
     question: Option<String>,
+    template_name: Option<String>
 ) -> Result<(), Box<dyn Error>> {
-    let template = template::load_template("simple_question").await?;
+    let template_name = template_name.unwrap_or_else(|| "simple_question".to_string());
+    let template = template::load_template(&template_name).await?;
+
+    let vector_store_path = config_dir()?.join("vector_store.yaml");
+
+    let vector_store_string = fs::read_to_string(&vector_store_path);
+
+    let mut vector_store: VectorStore = if vector_store_string.is_ok() {
+        serde_yaml::from_str(&vector_store_string.unwrap())?
+    } else {
+        VectorStore::new(384, jade_config.session_name.clone().unwrap())?
+    };
+
     let question = question.unwrap_or_else(|| "What is the meaning of life?".to_string());
-    api::ask(&jade_config, question, template).await
+
+    let max_brain_token_percentage = 0.25;
+    let max_brain_tokens =
+        (max_brain_token_percentage * jade_config.context_max_tokens as f32) as u16;
+
+    let mut brain = Brain::new(max_brain_tokens, &template);
+
+    api::ask(&jade_config, question, &template, Some(&mut vector_store), Some(&mut brain)).await?;
+
+    let _res = vector_store.serialize(&vector_store_path, jade_config.session_name.clone().unwrap());
+
+    Ok(())
 }
 
 /// Handle Interactive Command
@@ -112,19 +150,27 @@ async fn handle_ask_command(
 /// - `Result<(), Box<dyn Error>>`: Result type indicating success or error
 async fn handle_interactive_command(
     jade_config: config::AwfulJadeConfig,
-    name: Option<String>,
+    template_name: Option<String>
 ) -> Result<(), Box<dyn Error>> {
-    let conversation_name = name.unwrap_or_else(|| "default".to_string());
-    let template = template::load_template("default").await?;
-    println!("TEMPLATE: {:?}", template);
-    let vector_store = VectorStore::new(384).await?;
+    let template_name = template_name.unwrap_or_else(|| "simple_question".to_string());
+    let template = template::load_template(&template_name).await?;
+
+    let vector_store_path = config_dir()?.join("vector_store.yaml");
+
+    let vector_store_string = fs::read_to_string(&vector_store_path);
+
+    let vector_store: VectorStore = if vector_store_string.is_ok() {
+        serde_yaml::from_str(&vector_store_string.unwrap())?
+    } else {
+        VectorStore::new(384, jade_config.session_name.clone().unwrap())?
+    };
+
     let max_brain_token_percentage = 0.25;
     let max_brain_tokens =
         (max_brain_token_percentage * jade_config.context_max_tokens as f32) as u16;
     let brain = Brain::new(max_brain_tokens, &template);
     api::interactive_mode(
         &jade_config,
-        conversation_name,
         vector_store,
         brain,
         &template,
@@ -211,6 +257,8 @@ fn main() -> io::Result<()> {
         context_max_tokens: 8192,
         assistant_minimum_context_tokens: 2048,
         stop_words: vec!["\n<|im_start|>".to_string(), "<|im_end|>".to_string()],
+        session_db_url: "sqlite://sessions.sqlite3".to_string(),
+        session_name: None
     };
     let config_yaml = serde_yaml::to_string(&config)?;
     fs::write(config_path, config_yaml)?;
@@ -253,5 +301,7 @@ messages: []
 pub fn config_dir() -> Result<std::path::PathBuf, Box<dyn Error>> {
     let proj_dirs = ProjectDirs::from("com", "awful-security", "aj")
         .ok_or("Unable to determine config directory")?;
-    Ok(proj_dirs.config_dir().to_path_buf())
+    let config_dir = proj_dirs.config_dir().to_path_buf();
+
+    Ok(config_dir)
 }

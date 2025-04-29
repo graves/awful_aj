@@ -1,13 +1,12 @@
 use async_openai::types::{ChatCompletionRequestMessage, Role};
-use rust_bert::pipelines::conversation;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
+use tiktoken_rs::cl100k_base;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 
-use crate::config::AwfulJadeConfig;
+use crate::session_messages::SessionMessages;
 use crate::template::ChatTemplate;
-use crate::vector_store::VectorStore;
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Memory {
@@ -47,33 +46,21 @@ impl<'a> Brain<'a> {
         }
     }
 
-    pub fn add_memory(
-        &mut self,
-        memory: Memory,
-        user_request_message: &ChatCompletionRequestMessage,
-        config: &AwfulJadeConfig,
-    ) {
+    pub fn add_memory(&mut self, memory: Memory, session_messages: &mut SessionMessages) {
         self.memories.push_back(memory);
-        self.enforce_token_limit(&user_request_message, config);
+        self.enforce_token_limit(session_messages);
     }
 
-    fn enforce_token_limit(
-        &mut self,
-        user_request_message: &ChatCompletionRequestMessage,
-        config: &AwfulJadeConfig,
-    ) {
-        let mut conversation = self.build_preamble().expect("Failed to build preamble");
-        conversation.push((*user_request_message).clone());
+    fn enforce_token_limit(&mut self, session_messages: &mut SessionMessages) {
+        tracing::info!("Enforcing token limit.");
+        let bpe = cl100k_base().unwrap();
+        let brain_token_count = bpe.encode_with_special_tokens(&self.get_serialized()).len();
 
-        let token_count = VectorStore::count_tokens(&conversation, &config);
-        if token_count > self.max_tokens {
-            while VectorStore::count_tokens(&conversation, &config) > self.max_tokens
-                && !self.memories.is_empty()
-            {
-                self.memories.remove(0); // Removing the oldest memory
-                conversation = self.build_preamble().expect("Failed to build preamble");
-                conversation.push((*user_request_message).clone());
-            }
+        while brain_token_count > self.max_tokens as usize {
+            tracing::info!("Brain token count is greater than {}", self.max_tokens);
+            tracing::info!("Removing oldest memory");
+            self.memories.remove(0); // Removing the oldest memory
+            session_messages.preamble_messages = self.build_preamble().unwrap();
         }
     }
 
@@ -105,6 +92,7 @@ impl<'a> Brain<'a> {
         }];
 
         let brain_json = self.get_serialized();
+        tracing::info!("State of brain: {:?}", brain_json);
 
         messages.push(ChatCompletionRequestMessage {
             role: Role::User,

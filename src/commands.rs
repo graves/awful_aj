@@ -47,9 +47,16 @@ pub enum Commands {
     ///
     /// If the question is not provided on the command line, a default question
     /// will be used.
+    #[clap(name = "ask", alias = "a")]
     Ask {
         /// The question to be asked. If not provided, a default question is used.
         question: Option<String>,
+
+        #[arg(name = "template", short = 't')]
+        template: Option<String>,
+
+        #[arg(name = "session", short = 's')]
+        session: Option<String>,
     },
 
     /// The 'interactive' subcommand, which can have an optional name for the conversation.
@@ -57,8 +64,11 @@ pub enum Commands {
     /// This subcommand can be invoked with either 'i' or 'interactive'.
     #[clap(name = "interactive", alias = "i")]
     Interactive {
-        /// The name of the conversation to load or create. If not provided, a default name is used.
-        name: Option<String>,
+        #[arg(name = "template", short = 't')]
+        template: Option<String>,
+
+        #[arg(name = "session", short = 's')]
+        session: Option<String>,
     },
 
     /// The 'init' subcommand, which takes no arguments and is used for initialization.

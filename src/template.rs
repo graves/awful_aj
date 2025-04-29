@@ -68,7 +68,7 @@ pub async fn load_template(name: &str) -> Result<ChatTemplate, Box<dyn Error>> {
     let path = format!("templates/{}.yaml", name);
     let config_dir = crate::config_dir()?.join(&path);
 
-    debug!("Loading template: {}", config_dir.display());
+    tracing::info!("Loading template: {}", config_dir.display());
 
     let content = fs::read_to_string(config_dir)?;
     let template: ChatTemplate = serde_yaml::from_str(&content)?;
@@ -86,9 +86,10 @@ mod tests {
     #[tokio::test]
     async fn test_load_template_valid_file() {
         // Ensure the templates directory exists
-        let templates_dir = Path::new("templates");
+        let config_dir = crate::config_dir().expect("Config directory doesnt exist");
+        let templates_dir = config_dir.join(Path::new("templates"));
         if !templates_dir.exists() {
-            fs::create_dir(templates_dir).expect("Failed to create templates directory");
+            fs::create_dir(&templates_dir).expect("Failed to create templates directory");
         }
 
         // Create a temporary file within the templates directory
@@ -101,6 +102,7 @@ mod tests {
 
         let file_name = "valid_template";
         let file_path = templates_dir.join(format!("{}.yaml", file_name));
+
         fs::write(&file_path, file_content).expect("Unable to write to temporary file");
 
         // Attempt to load the template
@@ -115,7 +117,7 @@ mod tests {
     #[tokio::test]
     async fn test_load_template_invalid_file() {
         // Try to load a template from a non-existent file path.
-        let template = load_template("/non/existent/path").await;
+        let template = load_template("non/existent/path").await;
 
         // Assert that an error occurred.
         assert!(template.is_err());

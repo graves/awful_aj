@@ -4,13 +4,9 @@
         {
             "label": "build",
             "type": "shell",
-            "command": "source $nu.config-path; conda activate base; cargo build",
+            "command": "cargo build",
             "options": {
-                "env": {
-                    "LIBTORCH": "/opt/homebrew/Caskroom/miniconda/base/lib/python3.11/site-packages/torch",
-                    "LIBTORCH_USE_PYTORCH": "1",
-                    "DYLD_LIBRARY_PATH": "/opt/homebrew/Caskroom/miniconda/base/lib/python3.11/site-packages/torch/lib"
-                }
+                "env": {}
             },
             "problemMatcher": [
                 "$rustc"
@@ -19,6 +15,15 @@
                 "kind": "build",
                 "isDefault": true
             }
+        },
+        {
+            "type": "cargo",
+            "command": "test",
+            "problemMatcher": [
+                "$rustc"
+            ],
+            "group": "test",
+            "label": "rust: cargo test"
         }
     ]
 }
