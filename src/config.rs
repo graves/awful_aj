@@ -198,7 +198,7 @@ mod tests {
             r#"
 api_key: "example_api_key"
 api_base: "http://example.com"
-session_db_url: "/Users/tg/Projects/awful_aj/test.db"
+session_db_url: "aj.db"
 model: "example_model"
 context_max_tokens: 8192
 assistant_minimum_context_tokens: 2048
@@ -215,7 +215,7 @@ stop_words: ["<|im_end|>", "\n"]
         let config = config.unwrap();
         assert_eq!(config.api_key, "example_api_key");
         assert_eq!(config.api_base, "http://example.com");
-        assert_eq!(config.session_db_url, "/Users/tg/Projects/awful_aj/test.db");
+        assert_eq!(config.session_db_url, "aj.db");
         assert_eq!(config.model, "example_model");
         assert_eq!(config.context_max_tokens, 8192);
         assert_eq!(config.assistant_minimum_context_tokens, 2048);

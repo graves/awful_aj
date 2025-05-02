@@ -4,6 +4,7 @@
 //! configuration loading, and command execution based on user input from the command line.
 
 // Importing necessary modules and libraries
+#![feature(ascii_char)]
 extern crate diesel;
 
 mod api;
@@ -61,14 +62,13 @@ fn initialize_tracing() {
 /// - `Result<(), Box<dyn Error>>`: Result type indicating success or error
 async fn run() -> Result<(), Box<dyn Error>> {
     let cli = commands::Cli::parse();
-    let config_path = determine_config_path()?;
-    let mut jade_config = config::load_config(config_path.to_str().unwrap())?;
-
-    info!("CONFIG BEFORE ENSURE: {:?}", jade_config);
 
     match cli.command {
         commands::Commands::Ask { question, template , session} => {  
-            debug!("Entering ask mode");          
+            debug!("Entering ask mode");
+            let config_path = determine_config_path()?;
+            let mut jade_config = config::load_config(config_path.to_str().unwrap())?;
+
             if session.is_some() {
                 jade_config.ensure_conversation_and_config(&session.unwrap()).await?;
             }
@@ -77,9 +77,13 @@ async fn run() -> Result<(), Box<dyn Error>> {
         }
         commands::Commands::Interactive { template , session } => {
             debug!("Entering interactive mode");
+            let config_path = determine_config_path()?;
+            let mut jade_config = config::load_config(config_path.to_str().unwrap())?;
+
             if session.is_some() {
                 jade_config.ensure_conversation_and_config(&session.unwrap()).await?;
             }
+
             handle_interactive_command(jade_config, template).await?;
         }
         commands::Commands::Init => {
@@ -110,30 +114,32 @@ async fn handle_ask_command(
 ) -> Result<(), Box<dyn Error>> {
     let template_name = template_name.unwrap_or_else(|| "simple_question".to_string());
     let template = template::load_template(&template_name).await?;
-
-    let the_session_name = jade_config.session_name.clone().unwrap();
-    let digest = sha256::digest(&the_session_name);
-    let vector_store_name = format!("{}_vector_store.yaml", digest);
-    let vector_store_path = config_dir()?.join(vector_store_name);
-    let vector_store_string = fs::read_to_string(&vector_store_path);
-
-    let mut vector_store: VectorStore = if vector_store_string.is_ok() {
-        serde_yaml::from_str(&vector_store_string.unwrap())?
-    } else {
-        VectorStore::new(384, jade_config.session_name.clone().unwrap())?
-    };
-
     let question = question.unwrap_or_else(|| "What is the meaning of life?".to_string());
 
-    let max_brain_token_percentage = 0.25;
-    let max_brain_tokens =
-        (max_brain_token_percentage * jade_config.context_max_tokens as f32) as u16;
+    if let Some(the_session_name) = jade_config.session_name.clone() {
+        let digest = sha256::digest(&the_session_name);
+        let vector_store_name = format!("{}_vector_store.yaml", digest);
+        let vector_store_path = config_dir()?.join(vector_store_name);
+        let vector_store_string = fs::read_to_string(&vector_store_path);
 
-    let mut brain = Brain::new(max_brain_tokens, &template);
+        let mut vector_store: VectorStore = if vector_store_string.is_ok() {
+            serde_yaml::from_str(&vector_store_string.unwrap())?
+        } else {
+            VectorStore::new(384, jade_config.session_name.clone().unwrap())?
+        };
 
-    api::ask(&jade_config, question, &template, Some(&mut vector_store), Some(&mut brain)).await?;
+        let max_brain_token_percentage = 0.25;
+        let max_brain_tokens =
+            (max_brain_token_percentage * jade_config.context_max_tokens as f32) as u16;
 
-    let _res = vector_store.serialize(&vector_store_path, jade_config.session_name.clone().unwrap());
+        let mut brain = Brain::new(max_brain_tokens, &template);
+
+        api::ask(&jade_config, question, &template, Some(&mut vector_store), Some(&mut brain)).await?;
+
+        let _res = vector_store.serialize(&vector_store_path, jade_config.session_name.clone().unwrap());
+    } else {
+        api::ask(&jade_config, question, &template, None, None).await?;
+    }
 
     Ok(())
 }
@@ -213,7 +219,7 @@ fn init() -> Result<(), Box<dyn Error>> {
     info!("Creating template config directory: {}", path.display());
     fs::create_dir_all(path.clone())?;
 
-    let template_path = config_dir.join("templates/simple_question.yml");
+    let template_path = config_dir.join("templates/simple_question.yaml");
     info!("Creating template file: {}", template_path.display());
     let template = template::ChatTemplate {
         system_prompt: "You are Awful Jade, a helpful AI assistant programmed by Awful Security."
@@ -262,7 +268,7 @@ fn main() -> io::Result<()> {
         context_max_tokens: 8192,
         assistant_minimum_context_tokens: 2048,
         stop_words: vec!["\n<|im_start|>".to_string(), "<|im_end|>".to_string()],
-        session_db_url: "sqlite://sessions.sqlite3".to_string(),
+        session_db_url: "aj.db".to_string(),
         session_name: None
     };
     let config_yaml = serde_yaml::to_string(&config)?;
@@ -304,7 +310,7 @@ messages: []
 /// # Returns
 /// - `Result<PathBuf, Box<dyn Error>>`: The path to the configuration directory or an error
 pub fn config_dir() -> Result<std::path::PathBuf, Box<dyn Error>> {
-    let proj_dirs = ProjectDirs::from("com", "awful-security", "aj")
+    let proj_dirs = ProjectDirs::from("com", "awful-sec", "aj")
         .ok_or("Unable to determine config directory")?;
     let config_dir = proj_dirs.config_dir().to_path_buf();
 

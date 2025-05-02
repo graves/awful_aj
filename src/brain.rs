@@ -14,7 +14,7 @@ use crate::template::ChatTemplate;
 ///
 /// # Example
 /// ```rust
-/// use awful_security::brain::Memory;
+/// use crate::brain::Memory;
 /// let memory = Memory::new(Role::User, "Hello, how are you?".to_string());
 /// assert_eq!(memory.role, Role::User);
 /// assert_eq!(memory.content, "Hello, how are you?".to_string());
@@ -121,6 +121,34 @@ impl<'a> Brain<'a> {
     /// Builds the preamble messages for the AI model. Includes a system prompt, the brain state as
     /// JSON and an "Ok" message. Used for initialization of further conversations with the AI.
     pub fn build_preamble(&self) -> Result<Vec<ChatCompletionRequestMessage>, &'static str> {
+        let mut messages: Vec<ChatCompletionRequestMessage> = vec![ChatCompletionRequestMessage {
+            role: Role::System,
+            content: Some(self.template.system_prompt.clone()),
+            name: None,
+            function_call: None,
+        }];
+
+        let brain_json = self.get_serialized();
+        tracing::info!("State of brain: {:?}", brain_json);
+
+        messages.push(ChatCompletionRequestMessage {
+            role: Role::User,
+            content: Some(brain_json),
+            name: None,
+            function_call: None,
+        });
+
+        messages.push(ChatCompletionRequestMessage {
+            role: Role::Assistant,
+            content: Some("Ok.".to_string()),
+            name: None,
+            function_call: None,
+        });
+
+        Ok(messages)
+    }
+
+    pub fn build_brainless_preamble(&self) -> Result<Vec<ChatCompletionRequestMessage>, &'static str> {
         let mut messages: Vec<ChatCompletionRequestMessage> = vec![ChatCompletionRequestMessage {
             role: Role::System,
             content: Some(self.template.system_prompt.clone()),

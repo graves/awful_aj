@@ -36,10 +36,7 @@ use crossterm::{
 use futures::StreamExt;
 use hora::core::{ann_index::ANNIndex, node::Node};
 use std::{
-    error::Error,
-    io::{stdout, Write},
-    thread,
-    time::Duration,
+    env, error::Error, io::{stdout, Write}, thread, time::Duration
 };
 
 use tracing::{debug, error};
@@ -231,7 +228,7 @@ fn get_session_messages(
     question: &String,
 ) -> Result<SessionMessages, Box<dyn Error>> {
     let session_messages = if config.session_name.is_some() && brain.is_some() {
-        let prepare_brain = brain.as_ref().expect("Brain not found!");
+        let prepare_brain = brain.as_ref().expect("We need a Brain here!");
         let session_messages =
             prepare_messages_for_existing_session(&mut template, config, prepare_brain)?;
 
@@ -267,7 +264,7 @@ fn get_session_messages(
 
         session_messages
     } else {
-        let prepare_brain = brain.as_ref().expect("Brain not found!");
+        let prepare_brain = brain.as_ref();
         let session_messages = prepare_messages(&mut template, &config, prepare_brain).unwrap();
 
         session_messages
@@ -341,18 +338,37 @@ fn add_memories_to_brain(
 fn prepare_messages(
     template: &ChatTemplate,
     config: &AwfulJadeConfig,
-    brain: &Brain,
+    brain: Option<&&mut Brain>,
 ) -> Result<SessionMessages, Box<dyn Error>> {
     let mut session_messages = SessionMessages::new(config.clone());
-    let mut preamble_messages = brain.build_preamble().unwrap();
-    let mut template_messages = template.messages.clone();
 
-    session_messages
-        .preamble_messages
-        .append(&mut preamble_messages);
-    session_messages
-        .preamble_messages
-        .append(&mut template_messages);
+    if let Some(brain) = brain {
+        let mut preamble_messages = brain.build_preamble().unwrap();
+        let mut template_messages = template.messages.clone();
+
+        session_messages
+            .preamble_messages
+            .append(&mut preamble_messages);
+        session_messages
+            .preamble_messages
+            .append(&mut template_messages);
+    } else {
+        let mut preamble_messages: Vec<ChatCompletionRequestMessage> =
+            vec![ChatCompletionRequestMessage {
+                role: Role::System,
+                content: Some(template.system_prompt.clone()),
+                name: None,
+                function_call: None,
+            }];
+        let mut template_messages = template.messages.clone();
+
+        session_messages
+            .preamble_messages
+            .append(&mut preamble_messages);
+        session_messages
+            .preamble_messages
+            .append(&mut template_messages);
+    }
 
     Ok(session_messages)
 }
@@ -374,7 +390,7 @@ use diesel::prelude::*;
 fn prepare_messages_for_existing_session(
     template: &ChatTemplate,
     config: &AwfulJadeConfig,
-    brain: &Brain,
+    brain: &&mut Brain,
 ) -> Result<SessionMessages, Box<dyn Error>> {
     let mut session_messages = SessionMessages::new(config.clone());
 
@@ -446,10 +462,14 @@ fn prepare_messages_for_existing_session(
 
             Ok(session_messages)
         }
-        Err(_) => prepare_messages(template, config, brain),
+        Err(_) => {
+            let mut prepare_brain = brain;
+            prepare_messages(template, config, Some(&mut prepare_brain))
+        }
     }
 }
 
+use std::io::Read;
 /// Enters interactive conversation mode with the assistant.
 ///
 /// Allows the user to engage in a continuous session, sending multiple inputs and
@@ -493,9 +513,15 @@ pub async fn interactive_mode<'a>(
         stdout.execute(SetForegroundColor(Color::Green))?;
 
         stdout.flush()?;
-        let mut input = String::new();
-        std::io::stdin().read_line(&mut input)?;
-        input = input.trim().to_string();
+        let mut input_buf = Vec::<u8>::new();
+        std::io::stdin().read_to_end(&mut input_buf)?;
+        let input = input_buf
+            .as_ascii()
+            .unwrap()
+            .as_str()
+            .to_string()
+            .trim()
+            .to_string();
 
         stdout.execute(SetForegroundColor(Color::Reset))?;
 
@@ -506,8 +532,12 @@ pub async fn interactive_mode<'a>(
 
         let mut session_messages =
             get_session_messages(&Some(&mut brain), config, template, &input).unwrap();
-        let _added_memories_to_brain_result =
-            add_memories_to_brain(&Some(&mut vector_store), &input, &mut session_messages, &mut Some(&mut brain));
+        let _added_memories_to_brain_result = add_memories_to_brain(
+            &Some(&mut vector_store),
+            &input,
+            &mut session_messages,
+            &mut Some(&mut brain),
+        );
 
         let _convo_messages_insertion_result =
             session_messages
@@ -537,10 +567,15 @@ pub async fn interactive_mode<'a>(
             }
         };
 
-        session_messages.conversation_messages.push(assistant_response.clone());
+        session_messages
+            .conversation_messages
+            .push(assistant_response.clone());
 
         let _diesel_sqlite_response = session_messages
-        .insert_message("assistant".to_string(), assistant_response.content.unwrap());
+            .insert_message("assistant".to_string(), assistant_response.content.clone().unwrap());
+
+        env::set_var("AJ", assistant_response.content.unwrap());
+        println!("{:?}", env::vars());
     }
 
     Ok(())
@@ -548,12 +583,8 @@ pub async fn interactive_mode<'a>(
 
 #[cfg(test)]
 mod tests {
-    use crate::brain;
-
     use super::*;
     use async_openai::types::Role;
-    use httpmock::prelude::*;
-    use serde_json::json;
     use tracing_subscriber;
 
     fn setup() {
@@ -576,6 +607,7 @@ mod tests {
 
     // Mock template for testing
     fn mock_template() -> ChatTemplate {
+        setup();
         ChatTemplate {
             system_prompt: "You are Awful Jade, a helpful AI assistant.".to_string(),
             messages: vec![ChatCompletionRequestMessage {
@@ -589,6 +621,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_client() {
+        setup();
         let config = mock_config();
         let client = create_client(&config);
         assert!(client.is_ok(), "Failed to create client");
@@ -596,8 +629,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_prepare_messages() {
+        setup();
         let template = mock_template();
-        let brain = Brain::new(8092, &template);
+        let mut brain = Brain::new(8092, &template);
         let config = AwfulJadeConfig {
             api_key: "".to_string(),
             api_base: "".to_string(),
@@ -608,7 +642,7 @@ mod tests {
             session_db_url: "".to_string(),
             session_name: None,
         };
-        let messages = prepare_messages(&template, &config, &brain);
+        let messages = prepare_messages(&template, &config, Some(&&mut brain));
         assert!(messages.is_ok(), "Failed to prepare messages");
         let session_messages = messages.unwrap();
         let message_count =

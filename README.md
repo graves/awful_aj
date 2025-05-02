@@ -16,9 +16,45 @@
 
 ## Installation
 
+For now `aj` requires `libtorch` to be installed independently. Get the correct version of `libtorch` from [pytorch](https://download.pytorch.org/libtorch/cu124/).
+
+### Linux:
+
+```bash
+export LIBTORCH=/path/to/libtorch
+export LD_LIBRARY_PATH=${LIBTORCH}/lib:$LD_LIBRARY_PATH
+```
+
+### Windows
+
+```powershell
+$Env:LIBTORCH = "X:\path\to\libtorch"
+$Env:Path += ";X:\path\to\libtorch\lib"
+```
+
+### macOS + Homebrew
+
+#### bash
+
+```bash
+brew install pytorch jq
+export LIBTORCH=$(brew --cellar pytorch)/$(brew info --json pytorch | jq -r '.[0].installed[0].version')
+export DYLD_LIBRARY_PATH=${LIBTORCH}/lib:$LD_LIBRARY_PATH
+```
+
+#### nushell
+
+```nushell
+brew install pytorch jq
+$env.LIBTORCH = $"(brew --cellar pytorch)/(brew info --json pytorch | jq -r '.[0].installed[0].version')"
+$env.DYLD_LIBRARY_PATH = $"($env.LIBTORCH)/lib"
+```
+
+### Platform agnostic
+
 Install `aj` using `cargo`, the Rust package manager. If Rust and `cargo` are not already installed, get them from [rustup](https://rustup.rs/), and then install `aj`:
 ```sh
-cargo install awful_aj
+cargo install --git https://github.com/graves/awful_aj
 ```
 
 ## Usage
@@ -30,17 +66,24 @@ Before you start using `aj`, initiate it to create the necessary configuration a
 aj init
 ```
 
-This command creates folders at `~/.config/aj` and `~/.config/aj/templates` and populates them with default configurations and templates.
+Then run the diesel database migrations. The database URL will change depending on where your database is initialized. `aj` uses the `dirs_rs` library to determine the platforms configuration directory.
+```sh
+diesel database reset --database-url "/Users/tg/Library/Application Support/com.awful-sec.aj/aj.db"
+```
+
+This command creates files and folders in the platforms configuration directory and populates them with default configurations and templates.
 
 ### Configuration
 
-The configuration is stored in `~/.config/aj/config.yaml`. Update the `api_key` field with your actual API key before utilizing the aj tool. The initial configuration looks like this:
+The configuration is stored in `~/.config/aj/config.yaml`. Update the `api_key` field with your actual API key before utilizing the `aj` tool. The initial configuration looks like this:
 ```yaml
-api_base: "http://localhost:5001/v1"
+api_base: "http://localhost:1234/v1"
 api_key: "CHANGEME"
-model: "mistral-7b-openorca"
+model: "hermes-2-pro-mistral-7b"
 context_max_tokens: 8192
 assistant_minimum_context_tokens: 2048
+stop_words: ["<|im_end|>\\n<|im_start|>", "<|im_start|>\n"]
+session_db_url: "/Users/tg/Library/Application Support/com.awful-sec.aj/aj.db"
 ```
 
 ### Asking Questions

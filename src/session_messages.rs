@@ -156,15 +156,21 @@ impl SessionMessages {
     /// # Returns
     /// - `Result<Message, diesel::result::Error>`: Inserted message or error.
     pub fn insert_message(&mut self, role: String, content: String) -> Result<Message, diesel::result::Error> {
-        let conversation = self.query_conversation().unwrap();
-        let chat_message = Self::serialize_chat_message(
-            role,
-            content,
-            false,
-            &conversation,
-        );
+        let conversation = self.query_conversation();
 
-        return self.persist_message(&chat_message);
+        match conversation {
+            Ok(convo) => {
+                let chat_message = Self::serialize_chat_message(
+                    role,
+                    content,
+                    false,
+                    &convo,
+                );
+        
+                return self.persist_message(&chat_message);
+            },
+            Err(err) =>  return Err(err)
+        }
     }
 
     /// Queries the database for the current session's conversation.
@@ -175,14 +181,17 @@ impl SessionMessages {
         let a_session_name = self
             .config
             .session_name
-            .as_ref()
-            .expect("No session name on AwfulJadeConfig");
+            .as_ref();
+
+        if a_session_name.is_none() {
+            return Err(diesel::result::Error::NotFound)
+        }
 
         let conversation: Result<Conversation, diesel::result::Error> =
             self.sqlite_connection.transaction(|conn| {
                 let existing_conversation: Result<Conversation, diesel::result::Error> =
                     crate::schema::conversations::table
-                        .filter(crate::schema::conversations::session_name.eq(a_session_name))
+                        .filter(crate::schema::conversations::session_name.eq(a_session_name.unwrap()))
                         .first(conn);
 
                 existing_conversation
