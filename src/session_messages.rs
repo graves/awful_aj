@@ -9,8 +9,13 @@
 //! - Inserting and querying conversations and messages
 //! - Counting tokens to determine when old messages should be ejected
 //! - Interfacing with both `async-openai` and database models
-//! 
-use async_openai::types::{ChatCompletionRequestMessage, Role};
+//!
+use async_openai::types::ChatCompletionRequestAssistantMessage;
+use async_openai::types::ChatCompletionRequestAssistantMessageContent;
+use async_openai::types::ChatCompletionRequestSystemMessageContent;
+use async_openai::types::ChatCompletionRequestUserMessage;
+use async_openai::types::ChatCompletionRequestUserMessageContent;
+use async_openai::types::{ChatCompletionRequestMessage, ChatCompletionRequestSystemMessage, Role};
 use diesel::{Connection, SqliteConnection};
 
 use crate::{
@@ -93,12 +98,35 @@ impl SessionMessages {
         role: Role,
         content: String,
     ) -> ChatCompletionRequestMessage {
-        ChatCompletionRequestMessage {
-            role: role,
-            content: Some(content.clone()),
-            name: None,
-            function_call: None,
-        }
+        let message = match role {
+            Role::System => Some(ChatCompletionRequestMessage::System(
+                ChatCompletionRequestSystemMessage {
+                    content: ChatCompletionRequestSystemMessageContent::Text(content.clone()),
+                    name: None,
+                },
+            )),
+            Role::User => Some(ChatCompletionRequestMessage::User(
+                ChatCompletionRequestUserMessage {
+                    content: ChatCompletionRequestUserMessageContent::Text(content.clone()),
+                    name: None,
+                },
+            )),
+            Role::Assistant => Some(ChatCompletionRequestMessage::Assistant(
+                ChatCompletionRequestAssistantMessage {
+                    content: Some(ChatCompletionRequestAssistantMessageContent::Text(
+                        content.clone(),
+                    )),
+                    name: None,
+                    refusal: None,
+                    audio: None,
+                    tool_calls: None,
+                    function_call: None,
+                },
+            )),
+            _ => None,
+        };
+
+        message.unwrap()
     }
 
     /// Persists a `Message` into the database.
@@ -132,11 +160,37 @@ impl SessionMessages {
     ) -> Result<Vec<Message>, diesel::result::Error> {
         let mut persisted_messages = Vec::new();
         let conversation = self.query_conversation().unwrap();
+
         for message in messages {
-            let content = message.content.as_ref().unwrap();
+
+            let (role, content) = match message {
+                ChatCompletionRequestMessage::System(system_message) => {
+                    if let ChatCompletionRequestSystemMessageContent::Text(system_message_content) = system_message.content.clone() {
+                        (Some(Role::System), Some(system_message_content))
+                    } else {
+                        (None, None)
+                    }
+                },
+                ChatCompletionRequestMessage::User(user_message) => {
+                    if let ChatCompletionRequestUserMessageContent::Text(user_message_content) = user_message.content.clone() {
+                        (Some(Role::User), Some(user_message_content))
+                    } else {
+                        (None, None)
+                    }
+                },
+                ChatCompletionRequestMessage::Assistant(assistant_message) => {
+                    if let Some(ChatCompletionRequestAssistantMessageContent::Text(assistant_message_content)) = assistant_message.content.clone() {
+                        (Some(Role::Assistant), Some(assistant_message_content))
+                    } else {
+                        (None, None)
+                    }
+                },
+                _ => (None, None)
+            };
+
             let chat_message = Self::serialize_chat_message(
-                message.role.to_string(),
-                content.to_string(),
+                role.expect("Serializing messages requires a Role").to_string(),
+                content.expect("Serializing messages requires message content"),
                 false,
                 &conversation,
             );
@@ -155,21 +209,20 @@ impl SessionMessages {
     ///
     /// # Returns
     /// - `Result<Message, diesel::result::Error>`: Inserted message or error.
-    pub fn insert_message(&mut self, role: String, content: String) -> Result<Message, diesel::result::Error> {
+    pub fn insert_message(
+        &mut self,
+        role: String,
+        content: String,
+    ) -> Result<Message, diesel::result::Error> {
         let conversation = self.query_conversation();
 
         match conversation {
             Ok(convo) => {
-                let chat_message = Self::serialize_chat_message(
-                    role,
-                    content,
-                    false,
-                    &convo,
-                );
-        
+                let chat_message = Self::serialize_chat_message(role, content, false, &convo);
+
                 return self.persist_message(&chat_message);
-            },
-            Err(err) =>  return Err(err)
+            }
+            Err(err) => return Err(err),
         }
     }
 
@@ -178,20 +231,19 @@ impl SessionMessages {
     /// # Returns
     /// - `Result<Conversation, diesel::result::Error>`: Conversation or error.
     pub fn query_conversation(&mut self) -> Result<Conversation, diesel::result::Error> {
-        let a_session_name = self
-            .config
-            .session_name
-            .as_ref();
+        let a_session_name = self.config.session_name.as_ref();
 
         if a_session_name.is_none() {
-            return Err(diesel::result::Error::NotFound)
+            return Err(diesel::result::Error::NotFound);
         }
 
         let conversation: Result<Conversation, diesel::result::Error> =
             self.sqlite_connection.transaction(|conn| {
                 let existing_conversation: Result<Conversation, diesel::result::Error> =
                     crate::schema::conversations::table
-                        .filter(crate::schema::conversations::session_name.eq(a_session_name.unwrap()))
+                        .filter(
+                            crate::schema::conversations::session_name.eq(a_session_name.unwrap()),
+                        )
                         .first(conn);
 
                 existing_conversation
@@ -270,8 +322,34 @@ impl SessionMessages {
         let bpe = cl100k_base().unwrap();
         let mut count: isize = 0;
         for msg in messages {
-            if let Some(content) = &msg.content {
-                let msg_tokens = bpe.encode_with_special_tokens(content);
+
+            let content = match msg {
+                ChatCompletionRequestMessage::System(system_message) => {
+                    if let ChatCompletionRequestSystemMessageContent::Text(system_message_content) = system_message.content.clone() {
+                        Some(system_message_content)
+                    } else {
+                        None
+                    }
+                },
+                ChatCompletionRequestMessage::User(user_message) => {
+                    if let ChatCompletionRequestUserMessageContent::Text(user_message_content) = user_message.content.clone() {
+                        Some(user_message_content)
+                    } else {
+                        None
+                    }
+                },
+                ChatCompletionRequestMessage::Assistant(assistant_message) => {
+                    if let Some(ChatCompletionRequestAssistantMessageContent::Text(assistant_message_content)) = assistant_message.content.clone() {
+                        Some(assistant_message_content)
+                    } else {
+                        None
+                    }
+                },
+                _ => None
+            };
+
+            if let Some(content) = content {
+                let msg_tokens = bpe.encode_with_special_tokens(&content);
                 count += msg_tokens.len() as isize;
             }
         }

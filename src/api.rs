@@ -8,13 +8,16 @@
 //! # Example
 //!
 //! ```no_run
-//! use awful_aj::{AwfulJadeConfig, ChatTemplate, ask};
+//! use awful_aj::api::ask;
+//! use awful_aj::config::AwfulJadeConfig;
+//! use awful_aj::template::ChatTemplate;
 //!
-//! let config = AwfulJadeConfig::new(/* ... */);
-//! let template = ChatTemplate::new(/* ... */);
+//! // TODO
+//! // let config = AwfulJadeConfig::new(/* ... */);
+//! // let template = ChatTemplate::new(/* ... */);
 //! let question = "What is the meaning of life?".to_string();
 //!
-//! let _ = ask(&config, question, &template, None, None);
+//! // let _ = ask(&config, question, &template, None, None);
 //! ```
 use crate::{
     brain::{Brain, Memory},
@@ -25,7 +28,9 @@ use crate::{
 };
 use async_openai::{
     config::OpenAIConfig,
-    types::{ChatCompletionRequestMessage, CreateChatCompletionRequestArgs, Role},
+    types::{
+        ChatCompletionRequestAssistantMessage, ChatCompletionRequestAssistantMessageContent, ChatCompletionRequestMessage, ChatCompletionRequestSystemMessage, ChatCompletionRequestSystemMessageContent, ChatCompletionRequestUserMessage, ChatCompletionRequestUserMessageContent, CreateChatCompletionRequestArgs, ResponseFormat, ResponseFormatJsonSchema, Role
+    },
     Client,
 };
 use crossterm::{
@@ -36,7 +41,11 @@ use crossterm::{
 use futures::StreamExt;
 use hora::core::{ann_index::ANNIndex, node::Node};
 use std::{
-    env, error::Error, io::{stdout, Write}, thread, time::Duration
+    env,
+    error::Error,
+    io::{stdout, Write},
+    thread,
+    time::Duration,
 };
 
 use tracing::{debug, error};
@@ -75,6 +84,7 @@ async fn stream_response<'a>(
     model: String,
     session_messages: &mut SessionMessages,
     config: &AwfulJadeConfig,
+    template: &ChatTemplate,
     mut vector_store: Option<&mut VectorStore>,
     _brain: Option<&mut Brain<'a>>,
 ) -> Result<ChatCompletionRequestMessage, Box<dyn Error>> {
@@ -84,22 +94,28 @@ async fn stream_response<'a>(
             let ejected_assistant_message = session_messages.conversation_messages.remove(0);
 
             if let Some(the_vector_store) = vector_store.as_deref_mut() {
-                if let Some(content) = ejected_user_message.content {
-                    let vector = the_vector_store.embed_text_to_vector(&content)?;
-                    let memory = Memory::new(Role::User, content.clone());
-                    let res = the_vector_store.add_vector_with_content(vector, memory);
-                    if !res.is_err() {
-                        the_vector_store.build()?;
+
+                if let ChatCompletionRequestMessage::User(user_message) = ejected_user_message {
+                    if let ChatCompletionRequestUserMessageContent::Text(user_message_content) = user_message.content {
+                        let vector = the_vector_store.embed_text_to_vector(&user_message_content)?;
+                        let memory = Memory::new(Role::User, user_message_content);
+                        let res = the_vector_store.add_vector_with_content(vector, memory);
+                        if !res.is_err() {
+                            the_vector_store.build()?;
+                        }
                     }
-                }
-                if let Some(content) = ejected_assistant_message.content {
-                    let vector = the_vector_store.embed_text_to_vector(&content)?;
-                    let memory = Memory::new(Role::Assistant, content.clone());
-                    let res = the_vector_store.add_vector_with_content(vector, memory);
-                    if !res.is_err() {
-                        the_vector_store.build()?;
+                };
+
+                if let ChatCompletionRequestMessage::Assistant(assistant_message) = ejected_assistant_message {
+                    if let Some(ChatCompletionRequestAssistantMessageContent::Text(assistant_message_content)) = assistant_message.content {
+                        let vector = the_vector_store.embed_text_to_vector(&assistant_message_content)?;
+                        let memory = Memory::new(Role::User, assistant_message_content);
+                        let res = the_vector_store.add_vector_with_content(vector, memory);
+                        if !res.is_err() {
+                            the_vector_store.build()?;
+                        }
                     }
-                }
+                };
             }
         } else {
             break;
@@ -110,11 +126,16 @@ async fn stream_response<'a>(
     full_conversation.append(&mut session_messages.preamble_messages);
     full_conversation.append(&mut session_messages.conversation_messages);
 
+
+    let response_format_json_schema = template.response_format.clone().unwrap();
+    let response_format = ResponseFormat::JsonSchema { json_schema: response_format_json_schema };
+
     let request = CreateChatCompletionRequestArgs::default()
         .max_tokens(config.context_max_tokens)
         .model(model)
         .stop(config.stop_words.clone())
         .messages(full_conversation)
+        .response_format(response_format)
         .build()?;
 
     debug!("Sending request: {:?}", request);
@@ -151,14 +172,23 @@ async fn stream_response<'a>(
 
     drop(lock);
 
-    Ok(ChatCompletionRequestMessage {
-        role: Role::Assistant,
-        content: Some(response_string.clone()),
-        name: None,
-        function_call: None,
-    })
+    let chat_completion_request_assistant_content =
+        ChatCompletionRequestAssistantMessageContent::Text(response_string.clone());
+
+    let chat_completion_request_message =
+        ChatCompletionRequestMessage::Assistant(ChatCompletionRequestAssistantMessage {
+            content: Some(chat_completion_request_assistant_content),
+            name: None,
+            refusal: None,
+            audio: None,
+            tool_calls: None,
+            function_call: None
+        });
+
+    Ok(chat_completion_request_message)
 }
 
+use crate::api::ChatCompletionRequestAssistantMessageContent::Text;
 /// Asks a single question using the OpenAI API and processes the response.
 ///
 /// # Parameters
@@ -182,28 +212,52 @@ pub async fn ask<'a>(
     let _added_memories_to_brain_result =
         add_memories_to_brain(&vector_store, &question, &mut session_messages, &mut brain);
 
+        let mut question = if let Some(prepend_content) = template.pre_user_message_content.clone() {
+            format!("{} {}", prepend_content, question)
+        } else {
+            question
+        };
+
+        question = if let Some(append_content) = template.post_user_message_content.clone() {
+            format!("{} {}", question, append_content)
+        } else {
+            question
+        };
+
+    let chat_completion_request_message = ChatCompletionRequestMessage::User(
+        ChatCompletionRequestUserMessage { 
+            content: ChatCompletionRequestUserMessageContent::Text(question), 
+            name: None
+        }
+    );
+
     let _convo_messages_insertion_result =
         session_messages
             .conversation_messages
-            .push(ChatCompletionRequestMessage {
-                role: Role::User,
-                content: Some(question.to_string()),
-                name: None,
-                function_call: None,
-            });
+            .push(chat_completion_request_message);
 
     let assistant_response = stream_response(
         &client,
         config.model.clone(),
         &mut session_messages,
         &config,
+        &template,
         vector_store,
         brain,
     )
     .await?;
 
-    let _diesel_sqlite_response = session_messages
-        .insert_message("assistant".to_string(), assistant_response.content.unwrap());
+    let assistant_message_content = match assistant_response {
+        ChatCompletionRequestMessage::Assistant(assistant_message) => assistant_message.content,
+        _ => None
+    };
+
+    if let Some(assistant_response_content) = assistant_message_content {
+        if let Text(assistant_response_content_text) = assistant_response_content {
+            let _diesel_sqlite_response = session_messages
+                .insert_message("assistant".to_string(), assistant_response_content_text.clone());
+        }
+    };
 
     Ok(())
 }
@@ -353,13 +407,14 @@ fn prepare_messages(
             .preamble_messages
             .append(&mut template_messages);
     } else {
-        let mut preamble_messages: Vec<ChatCompletionRequestMessage> =
-            vec![ChatCompletionRequestMessage {
-                role: Role::System,
-                content: Some(template.system_prompt.clone()),
-                name: None,
-                function_call: None,
-            }];
+        let chat_completion_message = ChatCompletionRequestMessage::System(
+            ChatCompletionRequestSystemMessage {
+                content: ChatCompletionRequestSystemMessageContent::Text(template.system_prompt.clone()),
+                name: None
+            }
+        );
+
+        let mut preamble_messages: Vec<ChatCompletionRequestMessage> = vec![chat_completion_message];
         let mut template_messages = template.messages.clone();
 
         session_messages
@@ -408,11 +463,36 @@ fn prepare_messages_for_existing_session(
                     for msg in preamble_messages {
                         let role = SessionMessages::string_to_role(&msg.role);
 
-                        let msg_obj = ChatCompletionRequestMessage {
-                            role: role,
-                            content: Some(msg.content.clone()),
-                            name: None,
-                            function_call: None,
+                        let msg_obj = match role {
+                            Role::System => {
+                                ChatCompletionRequestMessage::System(
+                                   ChatCompletionRequestSystemMessage {
+                                        content: ChatCompletionRequestSystemMessageContent::Text(msg.content.clone()),
+                                        name: None
+                                   }
+                                )
+                            },
+                            Role::User => {
+                                ChatCompletionRequestMessage::User(
+                                   ChatCompletionRequestUserMessage {
+                                        content: ChatCompletionRequestUserMessageContent::Text(msg.content.clone()),
+                                        name: None
+                                   }
+                                )
+                            },
+                            Role::Assistant => {
+                                ChatCompletionRequestMessage::Assistant(
+                                   ChatCompletionRequestAssistantMessage {
+                                        content: Some(ChatCompletionRequestAssistantMessageContent::Text(msg.content.clone())),
+                                        name: None,
+                                        refusal: None,
+                                        audio: None,
+                                        tool_calls: None,
+                                        function_call: None
+                                   }
+                                )
+                            },
+                            _ => panic!("We don't handle this Role yet!!")
                         };
 
                         session_messages.preamble_messages.push(msg_obj);
@@ -445,17 +525,45 @@ fn prepare_messages_for_existing_session(
 
                     for message in template_messages {
                         let msg_clone = message.clone();
-                        let serialized_message = Message {
-                            id: None,
-                            role: message.role.to_string(),
-                            content: message.content.expect("Message content empty"),
-                            dynamic: false,
-                            conversation_id: conversation.id,
+
+                        let (role, content) = match message {
+                            ChatCompletionRequestMessage::System(system_message) => {
+                                if let ChatCompletionRequestSystemMessageContent::Text(message_content) = system_message.content {
+                                    (Some(Role::System), Some(message_content))
+                                } else {
+                                    (None, None)
+                                }
+                            },
+                            ChatCompletionRequestMessage::User(user_message) => {
+                                if let ChatCompletionRequestUserMessageContent::Text(message_content) = user_message.content {
+                                    (Some(Role::User), Some(message_content))
+                                } else {
+                                    (None, None)
+                                }
+                            },
+                            ChatCompletionRequestMessage::Assistant(assistant_message) => {
+                                if let Some(ChatCompletionRequestAssistantMessageContent::Text(message_content)) = assistant_message.content {
+                                    (Some(Role::Assistant), Some(message_content))
+                                } else {
+                                    (None, None)
+                                }
+                            },
+                            _ => (None, None)
                         };
 
-                        let _res = session_messages.persist_message(&serialized_message);
-
-                        session_messages.conversation_messages.push(msg_clone);
+                        if let Some(msg_content) = content {
+                            let serialized_message = Message {
+                                id: None,
+                                role: role.unwrap().to_string(),
+                                content: msg_content,
+                                dynamic: false,
+                                conversation_id: conversation.id,
+                            };
+    
+                            let _res = session_messages.persist_message(&serialized_message);
+    
+                            session_messages.conversation_messages.push(msg_clone);
+                        }
                     }
                 }
             }
@@ -513,20 +621,14 @@ pub async fn interactive_mode<'a>(
         stdout.execute(SetForegroundColor(Color::Green))?;
 
         stdout.flush()?;
-        let mut input_buf = Vec::<u8>::new();
-        std::io::stdin().read_to_end(&mut input_buf)?;
-        let input = input_buf
-            .as_ascii()
-            .unwrap()
-            .as_str()
-            .to_string()
-            .trim()
-            .to_string();
+
+        let mut input = String::new();
+        std::io::stdin().read_to_string(&mut input).expect("Failed to read from stdin");
 
         stdout.execute(SetForegroundColor(Color::Reset))?;
 
         // Exit the loop if the user types "exit"
-        if input.to_lowercase() == "exit" {
+        if input.trim().to_lowercase() == "exit" {
             break;
         }
 
@@ -539,15 +641,26 @@ pub async fn interactive_mode<'a>(
             &mut Some(&mut brain),
         );
 
+        input = if let Some(prepend_content) = template.pre_user_message_content.clone() {
+            format!("{} {}", prepend_content, input)
+        } else {
+            input
+        };
+
+        input = if let Some(append_content) = template.post_user_message_content.clone() {
+            format!("{} {}", input, append_content)
+        } else {
+            input
+        };
+
+        let chat_completion_message = ChatCompletionRequestMessage::User(
+            ChatCompletionRequestUserMessage { content: ChatCompletionRequestUserMessageContent::Text(input.to_string()), name: None }
+        );
+
         let _convo_messages_insertion_result =
             session_messages
                 .conversation_messages
-                .push(ChatCompletionRequestMessage {
-                    role: Role::User,
-                    content: Some(input.to_string()),
-                    name: None,
-                    function_call: None,
-                });
+                .push(chat_completion_message);
 
         // Get the AI's response using the OpenAI API
         let assistant_response = match stream_response(
@@ -555,6 +668,7 @@ pub async fn interactive_mode<'a>(
             config.model.clone(),
             &mut session_messages,
             &config,
+            &template,
             Some(&mut vector_store),
             Some(&mut brain),
         )
@@ -570,12 +684,21 @@ pub async fn interactive_mode<'a>(
         session_messages
             .conversation_messages
             .push(assistant_response.clone());
+        
+        match assistant_response {
+            ChatCompletionRequestMessage::Assistant(assistant_message) => {
 
-        let _diesel_sqlite_response = session_messages
-            .insert_message("assistant".to_string(), assistant_response.content.clone().unwrap());
+                if let Some(ChatCompletionRequestAssistantMessageContent::Text(assistant_message_content)) = assistant_message.content {
+                    let _diesel_sqlite_response = session_messages.insert_message(
+                        "assistant".to_string(),
+                        assistant_message_content.clone(),
+                    );
 
-        env::set_var("AJ", assistant_response.content.unwrap());
-        println!("{:?}", env::vars());
+                    env::set_var("AJ", assistant_message_content);
+                }
+            },
+            _ => ()
+        }
     }
 
     Ok(())
@@ -584,7 +707,6 @@ pub async fn interactive_mode<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use async_openai::types::Role;
     use tracing_subscriber;
 
     fn setup() {
@@ -608,14 +730,17 @@ mod tests {
     // Mock template for testing
     fn mock_template() -> ChatTemplate {
         setup();
+
+        let chat_completion_request = ChatCompletionRequestMessage::User(
+            ChatCompletionRequestUserMessage { content: ChatCompletionRequestUserMessageContent::Text("How do I read a file in Rust?".to_string()), name: None }
+        );
+
         ChatTemplate {
             system_prompt: "You are Awful Jade, a helpful AI assistant.".to_string(),
-            messages: vec![ChatCompletionRequestMessage {
-                role: Role::User,
-                content: Some("How do I read a file in Rust?".to_string()),
-                name: None,
-                function_call: None,
-            }],
+            messages: vec![chat_completion_request],
+            response_format: None,
+            pre_user_message_content: None,
+            post_user_message_content: None
         }
     }
 

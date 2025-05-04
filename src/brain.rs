@@ -1,3 +1,4 @@
+use async_openai::types::{ChatCompletionRequestAssistantMessage, ChatCompletionRequestAssistantMessageContent, ChatCompletionRequestSystemMessage, ChatCompletionRequestSystemMessageContent, ChatCompletionRequestUserMessage, ChatCompletionRequestUserMessageContent};
 use async_openai::types::{ChatCompletionRequestMessage, Role};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
@@ -5,6 +6,7 @@ use tiktoken_rs::cl100k_base;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 
+use crate::brain;
 use crate::session_messages::SessionMessages;
 use crate::template::ChatTemplate;
 
@@ -14,7 +16,9 @@ use crate::template::ChatTemplate;
 ///
 /// # Example
 /// ```rust
-/// use crate::brain::Memory;
+/// use awful_aj::brain::Memory;
+/// use async_openai::types::Role;
+/// 
 /// let memory = Memory::new(Role::User, "Hello, how are you?".to_string());
 /// assert_eq!(memory.role, Role::User);
 /// assert_eq!(memory.content, "Hello, how are you?".to_string());
@@ -121,57 +125,77 @@ impl<'a> Brain<'a> {
     /// Builds the preamble messages for the AI model. Includes a system prompt, the brain state as
     /// JSON and an "Ok" message. Used for initialization of further conversations with the AI.
     pub fn build_preamble(&self) -> Result<Vec<ChatCompletionRequestMessage>, &'static str> {
-        let mut messages: Vec<ChatCompletionRequestMessage> = vec![ChatCompletionRequestMessage {
-            role: Role::System,
-            content: Some(self.template.system_prompt.clone()),
-            name: None,
-            function_call: None,
-        }];
+        let system_chat_completion = ChatCompletionRequestMessage::System(
+            ChatCompletionRequestSystemMessage {
+                content: ChatCompletionRequestSystemMessageContent::Text(self.template.system_prompt.clone()),
+                name: None
+            }
+        );
+
+        let mut messages: Vec<ChatCompletionRequestMessage> = vec![system_chat_completion];
 
         let brain_json = self.get_serialized();
         tracing::info!("State of brain: {:?}", brain_json);
 
-        messages.push(ChatCompletionRequestMessage {
-            role: Role::User,
-            content: Some(brain_json),
-            name: None,
-            function_call: None,
-        });
+        let user_chat_completion = ChatCompletionRequestMessage::User(
+            ChatCompletionRequestUserMessage {
+                content: ChatCompletionRequestUserMessageContent::Text(brain_json),
+                name: None
+            }
+        );
 
-        messages.push(ChatCompletionRequestMessage {
-            role: Role::Assistant,
-            content: Some("Ok.".to_string()),
-            name: None,
-            function_call: None,
-        });
+        messages.push(user_chat_completion);
+
+        let assistant_chat_completion = ChatCompletionRequestMessage::Assistant(
+            ChatCompletionRequestAssistantMessage {
+                content: Some(ChatCompletionRequestAssistantMessageContent::Text("Ok".to_string())),
+                name: None,
+                refusal: None,
+                audio: None,
+                tool_calls: None,
+                function_call: None
+            }
+        );
+
+        messages.push(assistant_chat_completion);
 
         Ok(messages)
     }
 
     pub fn build_brainless_preamble(&self) -> Result<Vec<ChatCompletionRequestMessage>, &'static str> {
-        let mut messages: Vec<ChatCompletionRequestMessage> = vec![ChatCompletionRequestMessage {
-            role: Role::System,
-            content: Some(self.template.system_prompt.clone()),
-            name: None,
-            function_call: None,
-        }];
+        let system_chat_completion = ChatCompletionRequestMessage::System(
+            ChatCompletionRequestSystemMessage {
+                content: ChatCompletionRequestSystemMessageContent::Text(self.template.system_prompt.clone()),
+                name: None
+            }
+        );
+
+        let mut messages: Vec<ChatCompletionRequestMessage> = vec![system_chat_completion];
 
         let brain_json = self.get_serialized();
         tracing::info!("State of brain: {:?}", brain_json);
 
-        messages.push(ChatCompletionRequestMessage {
-            role: Role::User,
-            content: Some(brain_json),
-            name: None,
-            function_call: None,
-        });
+        let user_chat_completion = ChatCompletionRequestMessage::User(
+            ChatCompletionRequestUserMessage {
+                content: ChatCompletionRequestUserMessageContent::Text(brain_json),
+                name: None
+            }
+        );
 
-        messages.push(ChatCompletionRequestMessage {
-            role: Role::Assistant,
-            content: Some("Ok.".to_string()),
-            name: None,
-            function_call: None,
-        });
+        messages.push(user_chat_completion);
+
+        let assistant_chat_completion = ChatCompletionRequestMessage::Assistant(
+            ChatCompletionRequestAssistantMessage {
+                content: Some(ChatCompletionRequestAssistantMessageContent::Text("Ok".to_string())),
+                name: None,
+                refusal: None,
+                audio: None,
+                tool_calls: None,
+                function_call: None
+            }
+        );
+
+        messages.push(assistant_chat_completion);
 
         Ok(messages)
     }

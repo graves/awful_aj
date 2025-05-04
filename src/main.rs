@@ -11,12 +11,13 @@ mod api;
 mod brain;
 mod commands;
 mod config;
-mod template;
-mod vector_store;
-mod session_messages;
 pub mod models;
 pub mod schema;
+mod session_messages;
+mod template;
+mod vector_store;
 
+use async_openai::types::{ChatCompletionRequestMessage, ChatCompletionRequestUserMessage};
 use brain::{Brain, Memory};
 use clap::Parser;
 use directories::ProjectDirs;
@@ -64,24 +65,32 @@ async fn run() -> Result<(), Box<dyn Error>> {
     let cli = commands::Cli::parse();
 
     match cli.command {
-        commands::Commands::Ask { question, template , session} => {  
+        commands::Commands::Ask {
+            question,
+            template,
+            session,
+        } => {
             debug!("Entering ask mode");
             let config_path = determine_config_path()?;
             let mut jade_config = config::load_config(config_path.to_str().unwrap())?;
 
             if session.is_some() {
-                jade_config.ensure_conversation_and_config(&session.unwrap()).await?;
+                jade_config
+                    .ensure_conversation_and_config(&session.unwrap())
+                    .await?;
             }
 
             handle_ask_command(jade_config, question, template).await?;
         }
-        commands::Commands::Interactive { template , session } => {
+        commands::Commands::Interactive { template, session } => {
             debug!("Entering interactive mode");
             let config_path = determine_config_path()?;
             let mut jade_config = config::load_config(config_path.to_str().unwrap())?;
 
             if session.is_some() {
-                jade_config.ensure_conversation_and_config(&session.unwrap()).await?;
+                jade_config
+                    .ensure_conversation_and_config(&session.unwrap())
+                    .await?;
             }
 
             handle_interactive_command(jade_config, template).await?;
@@ -110,7 +119,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
 async fn handle_ask_command(
     jade_config: config::AwfulJadeConfig,
     question: Option<String>,
-    template_name: Option<String>
+    template_name: Option<String>,
 ) -> Result<(), Box<dyn Error>> {
     let template_name = template_name.unwrap_or_else(|| "simple_question".to_string());
     let template = template::load_template(&template_name).await?;
@@ -134,9 +143,19 @@ async fn handle_ask_command(
 
         let mut brain = Brain::new(max_brain_tokens, &template);
 
-        api::ask(&jade_config, question, &template, Some(&mut vector_store), Some(&mut brain)).await?;
+        api::ask(
+            &jade_config,
+            question,
+            &template,
+            Some(&mut vector_store),
+            Some(&mut brain),
+        )
+        .await?;
 
-        let _res = vector_store.serialize(&vector_store_path, jade_config.session_name.clone().unwrap());
+        let _res = vector_store.serialize(
+            &vector_store_path,
+            jade_config.session_name.clone().unwrap(),
+        );
     } else {
         api::ask(&jade_config, question, &template, None, None).await?;
     }
@@ -158,11 +177,10 @@ async fn handle_ask_command(
 /// - `Result<(), Box<dyn Error>>`: Result type indicating success or error
 async fn handle_interactive_command(
     jade_config: config::AwfulJadeConfig,
-    template_name: Option<String>
+    template_name: Option<String>,
 ) -> Result<(), Box<dyn Error>> {
     let template_name = template_name.unwrap_or_else(|| "simple_question".to_string());
     let template = template::load_template(&template_name).await?;
-
 
     let the_session_name = jade_config.session_name.clone().unwrap();
     let digest = sha256::digest(&the_session_name);
@@ -180,13 +198,7 @@ async fn handle_interactive_command(
     let max_brain_tokens =
         (max_brain_token_percentage * jade_config.context_max_tokens as f32) as u16;
     let brain = Brain::new(max_brain_tokens, &template);
-    api::interactive_mode(
-        &jade_config,
-        vector_store,
-        brain,
-        &template,
-    )
-    .await
+    api::interactive_mode(&jade_config, vector_store, brain, &template).await
 }
 
 /// Determine Config Path
@@ -205,6 +217,9 @@ fn determine_config_path() -> Result<PathBuf, Box<dyn Error>> {
     }
 }
 
+use async_openai::types::ChatCompletionRequestSystemMessage;
+use async_openai::types::ChatCompletionRequestSystemMessageContent;
+use async_openai::types::ChatCompletionRequestUserMessageContent;
 /// Initialization Function
 ///
 /// Handles the 'init' command. It is responsible for creating the necessary directories and
@@ -221,20 +236,14 @@ fn init() -> Result<(), Box<dyn Error>> {
 
     let template_path = config_dir.join("templates/simple_question.yaml");
     info!("Creating template file: {}", template_path.display());
-    let template = template::ChatTemplate {
-        system_prompt: "You are Awful Jade, a helpful AI assistant programmed by Awful Security."
-            .to_string(),
-        messages: vec![
-            async_openai::types::ChatCompletionRequestMessage {
-                role: async_openai::types::Role::User,
-                content: Some("How do I read a file in Rust?".to_string()),
-                name: None,
-                function_call: None,
-            },
-            async_openai::types::ChatCompletionRequestMessage {
-                role: async_openai::types::Role::Assistant,
-                content: Some(
-                    "Use `std::fs::File` and `std::io::Read` in Rust to read a file:
+    let user_message = ChatCompletionRequestMessage::User(ChatCompletionRequestUserMessage {
+        content: ChatCompletionRequestUserMessageContent::Text(
+            "How do I read a file in Rust?".to_string(),
+        ),
+        name: None,
+    });
+
+    let system_message_content = "Use `std::fs::File` and `std::io::Read` in Rust to read a file:
 ```rust
 use std::fs::File;
 use std::io::{self, Read};
@@ -247,12 +256,20 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 ```"
-                    .to_string(),
-                ),
-                name: None,
-                function_call: None,
-            },
-        ],
+    .to_string();
+
+    let system_message = ChatCompletionRequestMessage::System(ChatCompletionRequestSystemMessage {
+        content: ChatCompletionRequestSystemMessageContent::Text(system_message_content),
+        name: None,
+    });
+
+    let template = template::ChatTemplate {
+        system_prompt: "You are Awful Jade, a helpful AI assistant programmed by Awful Security."
+            .to_string(),
+        messages: vec![user_message, system_message],
+        response_format: None,
+        pre_user_message_content: None,
+        post_user_message_content: None
     };
     let template_yaml = serde_yaml::to_string(&template)?;
     fs::write(template_path, template_yaml)?;
@@ -269,7 +286,7 @@ fn main() -> io::Result<()> {
         assistant_minimum_context_tokens: 2048,
         stop_words: vec!["\n<|im_start|>".to_string(), "<|im_end|>".to_string()],
         session_db_url: "aj.db".to_string(),
-        session_name: None
+        session_name: None,
     };
     let config_yaml = serde_yaml::to_string(&config)?;
     fs::write(config_path, config_yaml)?;

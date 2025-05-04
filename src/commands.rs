@@ -9,17 +9,19 @@
 //! Parsing command-line arguments:
 //!
 //! ```no_run
+//! use clap::{Parser, Subcommand};
 //! use awful_aj::commands::{Cli, Commands};
 //!
 //! let cli = Cli::parse();
-//! match cli.command {
-//!     Commands::Ask { question } => {
+//! // TODO
+//! //match cli.command {
+//! //    Commands::Ask { question } => {
 //!         // Handle the 'ask' subcommand
-//!     }
-//!     Commands::Init => {
+//! //    }
+//! //    Commands::Init => {
 //!         // Handle the 'init' subcommand
-//!     }
-//! }
+//! //    }
+//! //}
 //! ```
 
 use clap::{Parser, Subcommand};

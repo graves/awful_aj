@@ -8,18 +8,17 @@
 //! Loading a chat template from a file:
 //!
 //! ```no_run
-//! use awful_jade::template::{ChatTemplate, load_template};
+//! use awful_aj::template::{ChatTemplate, load_template};
 //!
 //! let template_name = "example";
-//! let template: ChatTemplate = load_template(template_name).await.unwrap();
-//! println!("{:?}", template);
+//! // We can't run async functions in docstrings
+//! // let template: ChatTemplate = load_template(template_name).await.unwrap();
+//! // println!("{:?}", template);
 //! ```
 
-use async_openai::types::ChatCompletionRequestMessage;
+use async_openai::types::{ChatCompletionRequestMessage, ResponseFormatJsonSchema};
 use serde::{Deserialize, Serialize};
 use std::{error::Error, fs};
-use tracing::debug;
-
 /// Represents a chat template.
 ///
 /// A `ChatTemplate` holds a system prompt and a sequence of messages. The system prompt guides the assistant's behavior,
@@ -28,6 +27,7 @@ use tracing::debug;
 /// ## Fields
 /// - `system_prompt`: A `String` that defines the assistant's behavior.
 /// - `messages`: A `Vec<ChatCompletionRequestMessage>` that contains the messages constituting the conversation.
+/// -`json_schema`: A `ResponseFormatSchema` that contains a JSON schema that enforces a custom output.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ChatTemplate {
     /// The system prompt that guides the assistant's behavior.
@@ -35,6 +35,15 @@ pub struct ChatTemplate {
 
     /// A list of messages that are part of the chat template.
     pub messages: Vec<ChatCompletionRequestMessage>,
+
+    /// A JSON schema that enforces a custom output
+    pub response_format: Option<ResponseFormatJsonSchema>,
+
+    // A piece of text to prepend to each user message
+    pub pre_user_message_content: Option<String>,
+
+    // A piece of text to append to each user message
+    pub post_user_message_content: Option<String>,
 }
 
 /// Loads a chat template from a file.
@@ -52,7 +61,7 @@ pub struct ChatTemplate {
 /// ## Examples
 ///
 /// ```no_run
-/// use awful_jade::template::load_template;
+/// use awful_aj::template::load_template;
 /// use tokio;
 ///
 /// #[tokio::main]

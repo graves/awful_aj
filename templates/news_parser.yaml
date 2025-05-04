@@ -1,0 +1,132 @@
+system_prompt: You are Qwen, created by Alibaba Cloud.
+messages:
+  - role: user
+    content: |-
+      U.S. judge says 2-year-old apparently deported to Honduras 'with no meaningful process'
+      By Alana Wise
+
+      Saturday, April 26, 2025 • 1:12 PM EDT
+
+      A Trump-nominated federal judge in Louisiana said that a 2-year-old American citizen appears to have been deported "with no meaningful process." This comes as the Trump administration has faced growing criticisms for its hurried proceedings to remove as many noncitizens from the country as quickly as possible.
+
+      U.S. District Judge Terry Doughty wrote that the toddler, identified as VML, had been sent to Honduras on Friday, alongside her mother and sister, even as the court had sought to clarify the girl's status. He set a hearing on the case for May 16 "in the interest of dispelling our strong suspicion that the Government just deported a U.S. citizen with no meaningful process."
+
+      Related Story: NPR
+      On Friday afternoon, Doughty had called counsel for the federal government to try to speak with VML's mother and better understand the child's situation, but VML and her family were already "above the Gulf of America," the judge wrote, using President Trump's preferred term for the Gulf of Mexico.
+
+      "The Government contends that this is all okay because the mother wishes that the child be deported with her," Doughty wrote. "But the Court doesn't know that."
+
+      According to a lawsuit filed on VML's behalf, she and her family were taken into U.S. Immigration and Customs Enforcement (ICE) custody on Tuesday while attending a routine check-in with the mother's Intensive Supervision Appearance Program (ISAP).
+
+      Related Story: NPR
+      ISAP is an alternative to detention for noncitizens who are in the country unlawfully.
+
+      It is not immediately clear what was flagged during that meeting to trigger deportation proceedings for VML's mother and sister. But according to a court petition, her father, who had dropped the trio off at the meeting, was informed about an hour after the start of the meeting that his partner and two daughters had been taken into custody.
+
+      Related Story: NPR
+      The suit alleges that ICE agents repeatedly refused to give VML's father her location and denied him the opportunity to speak for more than a minute to VML's mother.
+
+      "V.M.L.'s father received a call from an ICE officer, who spoke to him for about a minute," the filing said.
+
+      "The officer said that V.M.L.'s mother was there, and that they did not have much time to speak to each other and that they were going to deport his partner and daughters. V.M.L.'s father was able to speak with his partner for only about or less than a minute. He heard his daughters crying and his partner crying," the filing said.
+
+      Related Story: NPR
+      According to the suit, at one point as VML's father tried to secure her release, New Orleans ICE Field Office Director Mellissa Harper began interrogating the family's attorney about the father's immigration status and attempted to lure him into custody as well.
+
+      In an emailed statement to NPR, the Department of Homeland Security (DHS), which oversees ICE, defended its decision.
+
+      "The parents made the decision to take the child with them to Honduras. It is common that parents want to be removed with their children," said Tricia McLaughlin, DHS' assistant secretary for public affairs.
+
+      The agency did not respond to further request for comment as to why McLaughlin implied that both parents had supported VML's deportation to Honduras when her father ostensibly remains in the United States.
+
+      VML is just the latest to be ensnared in the messy legal process as the Trump administration has rushed to remove as many undocumented immigrants as it can.
+
+      Last month, a Maryland man, Kilmar Abrego Garcia, was illegally deported to El Salvador and sent to the notorious CECOT megaprison "due to an "administrative error"
+  - role: assistant
+    content: |-
+      { "title": "U.S. judge says 2-year-old apparently deported to Honduras 'with no meaningful process'", "dateOfPublication": "2025-04-26", "timeOfPublication": "13:12:00", "summaryOfNewsArticle": "A U.S. District Judge has raised concerns regarding the deporting of a 2-year-old girl, identified as VML, from the United States to Honduras without following proper legal procedures. Judge Terry Doughty expressed that VML's mother and sister were deported on Friday alongside the toddler, despite a court request for clarification. This issue has arisen amidst criticisms of the Trump administration's rapid removal of noncitizens from the country. VML and her family were detained on Tuesday for a routine meeting, during which they were unexpectedly taken into custody. The judge believes that the government lacks evidence supporting the claim that VML's mother and sister wanted to be deported together, indicating potential issues with 'meaningful process.' The case highlights concerns about the Trump administration's rushed deportation procedures.", "namedEntities": [{"name": "VML", "descriptionOfEntity": "A 2-year-old girl who was mistakenly deported from the U.S. to Honduras without proper process." , "whyIsThisEntityRelevant": "VML is central to the story, as she's at the center of the controversy about her deportation without proper legal process." }, {"name": "Terry Doughty", "descriptionOfEntity": "U.S. District Judge in Louisiana who made a ruling regarding the case of VML." , "whyIsThisEntityRelevant": "The judge who issued a ruling on the case of VML, indicating his concern over the lack of meaningful process in her deportation." }, {"name": "Alana Wise", "descriptionOfEntity": "News reporter who published the article." , "whyIsThisEntityRelevant": "The author of the news article that contains information about VML's deportation and the judge's ruling." }, {"name": "U.S. District Judge", "descriptionOfEntity": "'Terry Doughty' who ruled on the case of VML." , "whyIsThisEntityRelevant": "The judge who ruled, highlighting the critical role he played in understanding and resolving a potentially controversial scenario." }, {"name": "Intensive Supervision Appearance Program (ISAP)", "descriptionOfEntity": "'An alternative to detention for noncitizens who are in the country unlawfully.'" , "whyIsThisEntityRelevant": "The alternative detention program that VML's mother was participating in when she and her family were apprehended by ICE." }, {"name": "ISAP", "descriptionOfEntity": "'An alternative to detention for noncitizens who are in the country unlawfully.'" , "whyIsThisEntityRelevant": "The detention program the family was part of, which could have been tied to a potential reason for their deportation." }, {"name": "Trump administration", "descriptionOfEntity": "'The current U.S. federal government that has faced criticism for its rapid removal of noncitizens.'" , "whyIsThisEntityRelevant": "The source of the controversy, as they are accused of rushing to remove noncitizens without proper legal process." }], "keyTakeAways": ["A 2-year-old girl was erroneously deported from the U.S. to Honduras without proper legal process." ], "importantDates": [{"dateMentionedInArticle": "2025-04-26", "descriptionOfWhyDateIsRelevant": "'The date when U.S. District Judge Terry Doughty issued a ruling regarding VML's case, highlighting the urgency of the issue and the lack of proper procedure in her deportation process." }], "importantTimeframes": [{"approximateTimeFrameStart": "Now", "approximateTimeFrameEnd": "2025-04-26", "descriptionOfWhyTimeFramRelevant": "'The time frame when the issue of VML's deportation without proper process came to light, indicating ongoing concern and potential for future occurrences." }, {"approximateTimeFrameStart": "2017-01-20", "approximateTimeFrameEnd": "2022-12-31", "descriptionOfWhyTimeFramRelevant": "'The time frame when the Trump administration was in power, suggesting that this issue may relate to their policies of rapid deportation." }]}
+response_format:
+  name: article_summarizer
+  strict: true
+  description:
+  schema:
+    type: object
+    properties:
+      title:
+        type: string
+      dateOfPublication:
+        type: string
+        format: date
+      timeOfPublication:
+        type: string
+        format: time
+      summaryOfNewsArticle:
+        type: string
+      namedEntities:
+        type: array
+        items:
+          type: object
+          properties:
+            name:
+              type: string
+            descriptionOfEntity:
+              type: string
+            whyIsThisEntityRelevant:
+              type: string
+              description: Explanation of why this named entity is relevant.
+          required:
+            - name
+            - descriptionOfEntity
+            - whyIsThisEntityRelevant
+      keyTakeAways:
+        type: array
+        items:
+          type: string
+      importantDates:
+        type: array
+        items:
+          type: object
+          properties:
+            dateMentionedInArticle:
+              type: string
+              format: date
+            descriptionOfWhyDateIsRelevant:
+              type: string
+          required:
+            - dateMentionedInArticle
+            - descriptionOfWhyDateIsRelevant
+      importantTimeframes:
+        type: array
+        items:
+          type: object
+          properties:
+            approximateTimeFrameStart:
+              type: string
+            approximateTimeFrameEnd:
+              type: string
+            descriptionOfWhyTimeFramRelevant:
+              type: string
+          required:
+            - approximateTimeFrameStart
+            - approximateTimeFrameEnd
+            - descriptionOfWhyTimeFramRelevant
+    required:
+      - title
+      - dateOfPublication
+      - timeOfPublication
+      - summaryOfNewsArticle
+      - namedEntities
+      - keyTakeAways
+      - importantDates
+      - importantTimeframes
+pre_user_message_content: |-
+  Please read the following news article and extract all of the key elements verbatim. To extract the key elements and summarize, follow these steps:
+
+  1. Identify all named entities.
+  2. Compile the key information points and create a summary paragraph.
+  3. Generate the final JSON object.
+  4. Read final JSON object and remove duplicate entries.
+  5. Output JSON object.
+
+  
+post_user_message_content:

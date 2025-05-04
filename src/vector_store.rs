@@ -17,7 +17,8 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::path::PathBuf;
 
-use crate::{config_dir, Memory};
+use crate::config_dir;
+use crate::brain::Memory;
 
 /// A persistent vector database for mapping high-dimensional vectors to associated memory content.
 ///

@@ -8,7 +8,7 @@
 //! Loading the configuration from a file:
 //!
 //! ```no_run
-//! use awful_jade::config::{AwfulJadeConfig, load_config};
+//! use awful_aj::config::{AwfulJadeConfig, load_config};
 //!
 //! let config_file_path = "/path/to/config.yaml";
 //! let config: AwfulJadeConfig = load_config(config_file_path).unwrap();
