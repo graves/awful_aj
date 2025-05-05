@@ -29,7 +29,7 @@ use crate::{
 use async_openai::{
     config::OpenAIConfig,
     types::{
-        ChatCompletionRequestAssistantMessage, ChatCompletionRequestAssistantMessageContent, ChatCompletionRequestMessage, ChatCompletionRequestSystemMessage, ChatCompletionRequestSystemMessageContent, ChatCompletionRequestUserMessage, ChatCompletionRequestUserMessageContent, CreateChatCompletionRequestArgs, ResponseFormat, ResponseFormatJsonSchema, Role
+        ChatCompletionRequestAssistantMessage, ChatCompletionRequestAssistantMessageContent, ChatCompletionRequestMessage, ChatCompletionRequestSystemMessage, ChatCompletionRequestSystemMessageContent, ChatCompletionRequestUserMessage, ChatCompletionRequestUserMessageContent, CreateAssistantRequest, CreateChatCompletionRequestArgs, ResponseFormat, ResponseFormatJsonSchema, Role
     },
     Client,
 };
@@ -127,16 +127,27 @@ async fn stream_response<'a>(
     full_conversation.append(&mut session_messages.conversation_messages);
 
 
-    let response_format_json_schema = template.response_format.clone().unwrap();
-    let response_format = ResponseFormat::JsonSchema { json_schema: response_format_json_schema };
+    let request = match template.response_format.clone() {
+        Some(response_format_json_schema) => {
+            let response_format = ResponseFormat::JsonSchema { json_schema: response_format_json_schema };
 
-    let request = CreateChatCompletionRequestArgs::default()
-        .max_tokens(config.context_max_tokens)
-        .model(model)
-        .stop(config.stop_words.clone())
-        .messages(full_conversation)
-        .response_format(response_format)
-        .build()?;
+            CreateChatCompletionRequestArgs::default()
+                .max_tokens(config.context_max_tokens)
+                .model(model)
+                .stop(config.stop_words.clone())
+                .messages(full_conversation)
+                .response_format(response_format)
+                .build()?
+        },
+        None => {
+            CreateChatCompletionRequestArgs::default()
+            .max_tokens(config.context_max_tokens)
+            .model(model)
+            .stop(config.stop_words.clone())
+            .messages(full_conversation)
+            .build()?
+        }
+    };
 
     debug!("Sending request: {:?}", request);
 
@@ -206,7 +217,7 @@ pub async fn ask<'a>(
     template: &ChatTemplate,
     vector_store: Option<&mut VectorStore>,
     mut brain: Option<&mut Brain<'a>>,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<String, Box<dyn Error>> {
     let client = create_client(config)?;
     let mut session_messages = get_session_messages(&brain, config, template, &question).unwrap();
     let _added_memories_to_brain_result =
@@ -256,10 +267,12 @@ pub async fn ask<'a>(
         if let Text(assistant_response_content_text) = assistant_response_content {
             let _diesel_sqlite_response = session_messages
                 .insert_message("assistant".to_string(), assistant_response_content_text.clone());
+
+            return Ok(assistant_response_content_text.clone())
         }
     };
 
-    Ok(())
+    Err("No assistant response".into())
 }
 
 /// Prepares session messages for a new or ongoing session based on provided configuration.
