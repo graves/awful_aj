@@ -7,24 +7,15 @@
 #![feature(ascii_char)]
 extern crate diesel;
 
-mod api;
-mod brain;
-mod commands;
-mod config;
-pub mod models;
-pub mod schema;
-mod session_messages;
-mod template;
-mod vector_store;
-
 use async_openai::types::{ChatCompletionRequestMessage, ChatCompletionRequestUserMessage};
-use brain::{Brain, Memory};
+use awful_aj::brain::{Brain, Memory};
+use awful_aj::{api, commands, config, template};
 use clap::Parser;
 use directories::ProjectDirs;
 use once_cell::sync::OnceCell;
 use std::{env, error::Error, fs, path::PathBuf, vec};
 use tracing::{debug, info};
-use vector_store::VectorStore;
+use awful_aj::vector_store::VectorStore;
 
 // A static OnceCell to hold the tracing subscriber, ensuring it is only initialized once.
 static TRACING: OnceCell<()> = OnceCell::new();
@@ -287,6 +278,7 @@ fn main() -> io::Result<()> {
         stop_words: vec!["\n<|im_start|>".to_string(), "<|im_end|>".to_string()],
         session_db_url: "aj.db".to_string(),
         session_name: None,
+        should_stream: None
     };
     let config_yaml = serde_yaml::to_string(&config)?;
     fs::write(config_path, config_yaml)?;

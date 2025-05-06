@@ -48,7 +48,7 @@ messages:
 response_format:
   name: article_summarizer
   strict: true
-  description:
+  description: Represents a summarized news article.
   schema:
     type: object
     properties:
@@ -69,15 +69,17 @@ response_format:
           properties:
             name:
               type: string
-            descriptionOfEntity:
+              description: Name of entity.
+            whatIsThisEntity:
               type: string
-            whyIsThisEntityRelevant:
+              description: Explanation of how this entity is relevant to the world.
+            whyIsThisEntityRelevantToTheArticle:
               type: string
-              description: Explanation of why this named entity is relevant.
+              description: Explanation of why this named entity is relevant to the article.
           required:
             - name
-            - descriptionOfEntity
-            - whyIsThisEntityRelevant
+            - whatIsThisEntity
+            - whyIsThisEntityRelevantToTheArticle
       keyTakeAways:
         type: array
         items:
@@ -104,12 +106,12 @@ response_format:
               type: string
             approximateTimeFrameEnd:
               type: string
-            descriptionOfWhyTimeFramRelevant:
+            descriptionOfWhyTimeFrameIsRelevant:
               type: string
           required:
             - approximateTimeFrameStart
             - approximateTimeFrameEnd
-            - descriptionOfWhyTimeFramRelevant
+            - descriptionOfWhyTimeFrameIsRelevant
     required:
       - title
       - dateOfPublication
@@ -121,12 +123,12 @@ response_format:
       - importantTimeframes
 pre_user_message_content: |-
   Please read the following news article and extract all of the key elements verbatim. To extract the key elements and summarize, follow these steps:
-
   1. Identify all named entities.
-  2. Compile the key information points and create a summary paragraph.
-  3. Generate the final JSON object.
-  4. Read final JSON object and remove duplicate entries.
-  5. Output JSON object.
-
-  
+  2. Write a sentence describing why this entity is relevant to the world outside of the article.
+  3. Write a sentence describing how this entity is relevant to the article.
+  4. Compile the key information points and create a summary paragraph.
+  5. Generate the final JSON object.
+  6. Read final JSON object and ensure there are no duplicate values.
+  7. Review format of JSON Object to ensure correctness.
+  8. Output JSON object.
 post_user_message_content:

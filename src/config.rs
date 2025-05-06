@@ -53,6 +53,9 @@ pub struct AwfulJadeConfig {
 
     // Session name
     pub session_name: Option<String>,
+
+    // Whether or not to stream the output of an ask command to stdout
+    pub should_stream: Option<bool>
 }
 
 impl AwfulJadeConfig {
@@ -160,7 +163,6 @@ impl AwfulJadeConfig {
 /// }
 /// ```
 pub fn load_config(file: &str) -> Result<AwfulJadeConfig, Box<dyn Error>> {
-    println!("LOADING: {:?}", file);
     let content = fs::read_to_string(file)?;
     let config: AwfulJadeConfig = serde_yaml::from_str(&content)?;
     Ok(config)
