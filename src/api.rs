@@ -207,7 +207,13 @@ async fn fetch_response<'a>(
     while session_messages.should_eject_message() {
         if session_messages.conversation_messages.len() > 0 {
             let ejected_user_message = session_messages.conversation_messages.remove(0);
-            let ejected_assistant_message = session_messages.conversation_messages.remove(0);
+
+            let ejected_assistant_message = if session_messages.conversation_messages.len() > 0 {
+                Some(session_messages.conversation_messages.remove(0))
+            } else {
+                None
+            };
+
 
             if let Some(the_vector_store) = vector_store.as_deref_mut() {
 
@@ -222,15 +228,17 @@ async fn fetch_response<'a>(
                     }
                 };
 
-                if let ChatCompletionRequestMessage::Assistant(assistant_message) = ejected_assistant_message {
-                    if let Some(ChatCompletionRequestAssistantMessageContent::Text(assistant_message_content)) = assistant_message.content {
-                        let vector = the_vector_store.embed_text_to_vector(&assistant_message_content)?;
-                        let memory = Memory::new(Role::User, assistant_message_content);
-                        let res = the_vector_store.add_vector_with_content(vector, memory);
-                        if !res.is_err() {
-                            the_vector_store.build()?;
+                if let Some(ejected_assistant_message) = ejected_assistant_message {
+                    if let ChatCompletionRequestMessage::Assistant(assistant_message) = ejected_assistant_message {
+                        if let Some(ChatCompletionRequestAssistantMessageContent::Text(assistant_message_content)) = assistant_message.content {
+                            let vector = the_vector_store.embed_text_to_vector(&assistant_message_content)?;
+                            let memory = Memory::new(Role::User, assistant_message_content);
+                            let res = the_vector_store.add_vector_with_content(vector, memory);
+                            if !res.is_err() {
+                                the_vector_store.build()?;
+                            }
                         }
-                    }
+                    };
                 };
             }
         } else {
