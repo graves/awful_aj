@@ -1,4 +1,4 @@
-//! # Session Messages Module
+//! # Session Messages Modul
 //!
 //! This module manages the lifecycle of chat session messages, including
 //! persistence to a SQLite database, token counting, message serialization,
@@ -19,7 +19,7 @@ use async_openai::types::{ChatCompletionRequestMessage, ChatCompletionRequestSys
 use diesel::{Connection, SqliteConnection};
 
 use crate::{
-    config::{establish_connection, AwfulJadeConfig},
+    config::{AwfulJadeConfig, establish_connection},
     models::{Conversation, Message},
 };
 
@@ -162,34 +162,41 @@ impl SessionMessages {
         let conversation = self.query_conversation().unwrap();
 
         for message in messages {
-
             let (role, content) = match message {
                 ChatCompletionRequestMessage::System(system_message) => {
-                    if let ChatCompletionRequestSystemMessageContent::Text(system_message_content) = system_message.content.clone() {
+                    if let ChatCompletionRequestSystemMessageContent::Text(system_message_content) =
+                        system_message.content.clone()
+                    {
                         (Some(Role::System), Some(system_message_content))
                     } else {
                         (None, None)
                     }
-                },
+                }
                 ChatCompletionRequestMessage::User(user_message) => {
-                    if let ChatCompletionRequestUserMessageContent::Text(user_message_content) = user_message.content.clone() {
+                    if let ChatCompletionRequestUserMessageContent::Text(user_message_content) =
+                        user_message.content.clone()
+                    {
                         (Some(Role::User), Some(user_message_content))
                     } else {
                         (None, None)
                     }
-                },
+                }
                 ChatCompletionRequestMessage::Assistant(assistant_message) => {
-                    if let Some(ChatCompletionRequestAssistantMessageContent::Text(assistant_message_content)) = assistant_message.content.clone() {
+                    if let Some(ChatCompletionRequestAssistantMessageContent::Text(
+                        assistant_message_content,
+                    )) = assistant_message.content.clone()
+                    {
                         (Some(Role::Assistant), Some(assistant_message_content))
                     } else {
                         (None, None)
                     }
-                },
-                _ => (None, None)
+                }
+                _ => (None, None),
             };
 
             let chat_message = Self::serialize_chat_message(
-                role.expect("Serializing messages requires a Role").to_string(),
+                role.expect("Serializing messages requires a Role")
+                    .to_string(),
                 content.expect("Serializing messages requires message content"),
                 false,
                 &conversation,
@@ -322,30 +329,36 @@ impl SessionMessages {
         let bpe = cl100k_base().unwrap();
         let mut count: isize = 0;
         for msg in messages {
-
             let content = match msg {
                 ChatCompletionRequestMessage::System(system_message) => {
-                    if let ChatCompletionRequestSystemMessageContent::Text(system_message_content) = system_message.content.clone() {
+                    if let ChatCompletionRequestSystemMessageContent::Text(system_message_content) =
+                        system_message.content.clone()
+                    {
                         Some(system_message_content)
                     } else {
                         None
                     }
-                },
+                }
                 ChatCompletionRequestMessage::User(user_message) => {
-                    if let ChatCompletionRequestUserMessageContent::Text(user_message_content) = user_message.content.clone() {
+                    if let ChatCompletionRequestUserMessageContent::Text(user_message_content) =
+                        user_message.content.clone()
+                    {
                         Some(user_message_content)
                     } else {
                         None
                     }
-                },
+                }
                 ChatCompletionRequestMessage::Assistant(assistant_message) => {
-                    if let Some(ChatCompletionRequestAssistantMessageContent::Text(assistant_message_content)) = assistant_message.content.clone() {
+                    if let Some(ChatCompletionRequestAssistantMessageContent::Text(
+                        assistant_message_content,
+                    )) = assistant_message.content.clone()
+                    {
                         Some(assistant_message_content)
                     } else {
                         None
                     }
-                },
-                _ => None
+                }
+                _ => None,
             };
 
             if let Some(content) = content {

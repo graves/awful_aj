@@ -20,26 +20,35 @@
 //! // let _ = ask(&config, question, &template, None, None);
 //! ```
 use crate::{
-    brain::{Brain, Memory}, config::{establish_connection, AwfulJadeConfig}, schema::awful_configs, session_messages::SessionMessages, template::ChatTemplate, vector_store::VectorStore
+    brain::{Brain, Memory},
+    config::{AwfulJadeConfig, establish_connection},
+    schema::awful_configs,
+    session_messages::SessionMessages,
+    template::ChatTemplate,
+    vector_store::VectorStore,
 };
 use async_openai::{
+    Client,
     config::OpenAIConfig,
     types::{
-        ChatCompletionRequestAssistantMessage, ChatCompletionRequestAssistantMessageContent, ChatCompletionRequestMessage, ChatCompletionRequestSystemMessage, ChatCompletionRequestSystemMessageContent, ChatCompletionRequestUserMessage, ChatCompletionRequestUserMessageContent, CreateAssistantRequest, CreateChatCompletionRequestArgs, ResponseFormat, ResponseFormatJsonSchema, Role
+        ChatCompletionRequestAssistantMessage, ChatCompletionRequestAssistantMessageContent,
+        ChatCompletionRequestMessage, ChatCompletionRequestSystemMessage,
+        ChatCompletionRequestSystemMessageContent, ChatCompletionRequestUserMessage,
+        ChatCompletionRequestUserMessageContent, CreateAssistantRequest,
+        CreateChatCompletionRequestArgs, ResponseFormat, ResponseFormatJsonSchema, Role,
     },
-    Client,
 };
 use crossterm::{
+    ExecutableCommand,
     cursor::MoveTo,
     style::{Attribute, Color, Print, SetAttribute, SetForegroundColor},
-    ExecutableCommand,
 };
 use futures::StreamExt;
 use hora::core::{ann_index::ANNIndex, node::Node};
 use std::{
     env,
     error::Error,
-    io::{stdout, Write},
+    io::{Write, stdout},
     thread,
     time::Duration,
 };
@@ -90,10 +99,12 @@ async fn stream_response<'a>(
             let ejected_assistant_message = session_messages.conversation_messages.remove(0);
 
             if let Some(the_vector_store) = vector_store.as_deref_mut() {
-
                 if let ChatCompletionRequestMessage::User(user_message) = ejected_user_message {
-                    if let ChatCompletionRequestUserMessageContent::Text(user_message_content) = user_message.content {
-                        let vector = the_vector_store.embed_text_to_vector(&user_message_content)?;
+                    if let ChatCompletionRequestUserMessageContent::Text(user_message_content) =
+                        user_message.content
+                    {
+                        let vector =
+                            the_vector_store.embed_text_to_vector(&user_message_content)?;
                         let memory = Memory::new(Role::User, user_message_content);
                         let res = the_vector_store.add_vector_with_content(vector, memory);
                         if !res.is_err() {
@@ -102,9 +113,15 @@ async fn stream_response<'a>(
                     }
                 };
 
-                if let ChatCompletionRequestMessage::Assistant(assistant_message) = ejected_assistant_message {
-                    if let Some(ChatCompletionRequestAssistantMessageContent::Text(assistant_message_content)) = assistant_message.content {
-                        let vector = the_vector_store.embed_text_to_vector(&assistant_message_content)?;
+                if let ChatCompletionRequestMessage::Assistant(assistant_message) =
+                    ejected_assistant_message
+                {
+                    if let Some(ChatCompletionRequestAssistantMessageContent::Text(
+                        assistant_message_content,
+                    )) = assistant_message.content
+                    {
+                        let vector =
+                            the_vector_store.embed_text_to_vector(&assistant_message_content)?;
                         let memory = Memory::new(Role::User, assistant_message_content);
                         let res = the_vector_store.add_vector_with_content(vector, memory);
                         if !res.is_err() {
@@ -122,10 +139,11 @@ async fn stream_response<'a>(
     full_conversation.append(&mut session_messages.preamble_messages);
     full_conversation.append(&mut session_messages.conversation_messages);
 
-
     let request = match template.response_format.clone() {
         Some(response_format_json_schema) => {
-            let response_format = ResponseFormat::JsonSchema { json_schema: response_format_json_schema };
+            let response_format = ResponseFormat::JsonSchema {
+                json_schema: response_format_json_schema,
+            };
 
             CreateChatCompletionRequestArgs::default()
                 .max_tokens(config.context_max_tokens)
@@ -134,15 +152,13 @@ async fn stream_response<'a>(
                 .messages(full_conversation)
                 .response_format(response_format)
                 .build()?
-        },
-        None => {
-            CreateChatCompletionRequestArgs::default()
+        }
+        None => CreateChatCompletionRequestArgs::default()
             .max_tokens(config.context_max_tokens)
             .model(model)
             .stop(config.stop_words.clone())
             .messages(full_conversation)
-            .build()?
-        }
+            .build()?,
     };
 
     debug!("Sending request: {:?}", request);
@@ -189,7 +205,7 @@ async fn stream_response<'a>(
             refusal: None,
             audio: None,
             tool_calls: None,
-            function_call: None
+            function_call: None,
         });
 
     Ok(chat_completion_request_message)
@@ -214,12 +230,13 @@ async fn fetch_response<'a>(
                 None
             };
 
-
             if let Some(the_vector_store) = vector_store.as_deref_mut() {
-
                 if let ChatCompletionRequestMessage::User(user_message) = ejected_user_message {
-                    if let ChatCompletionRequestUserMessageContent::Text(user_message_content) = user_message.content {
-                        let vector = the_vector_store.embed_text_to_vector(&user_message_content)?;
+                    if let ChatCompletionRequestUserMessageContent::Text(user_message_content) =
+                        user_message.content
+                    {
+                        let vector =
+                            the_vector_store.embed_text_to_vector(&user_message_content)?;
                         let memory = Memory::new(Role::User, user_message_content);
                         let res = the_vector_store.add_vector_with_content(vector, memory);
                         if !res.is_err() {
@@ -229,9 +246,15 @@ async fn fetch_response<'a>(
                 };
 
                 if let Some(ejected_assistant_message) = ejected_assistant_message {
-                    if let ChatCompletionRequestMessage::Assistant(assistant_message) = ejected_assistant_message {
-                        if let Some(ChatCompletionRequestAssistantMessageContent::Text(assistant_message_content)) = assistant_message.content {
-                            let vector = the_vector_store.embed_text_to_vector(&assistant_message_content)?;
+                    if let ChatCompletionRequestMessage::Assistant(assistant_message) =
+                        ejected_assistant_message
+                    {
+                        if let Some(ChatCompletionRequestAssistantMessageContent::Text(
+                            assistant_message_content,
+                        )) = assistant_message.content
+                        {
+                            let vector = the_vector_store
+                                .embed_text_to_vector(&assistant_message_content)?;
                             let memory = Memory::new(Role::User, assistant_message_content);
                             let res = the_vector_store.add_vector_with_content(vector, memory);
                             if !res.is_err() {
@@ -250,10 +273,11 @@ async fn fetch_response<'a>(
     full_conversation.append(&mut session_messages.preamble_messages);
     full_conversation.append(&mut session_messages.conversation_messages);
 
-
     let request = match template.response_format.clone() {
         Some(response_format_json_schema) => {
-            let response_format = ResponseFormat::JsonSchema { json_schema: response_format_json_schema };
+            let response_format = ResponseFormat::JsonSchema {
+                json_schema: response_format_json_schema,
+            };
 
             CreateChatCompletionRequestArgs::default()
                 .max_tokens(config.context_max_tokens)
@@ -262,15 +286,13 @@ async fn fetch_response<'a>(
                 .messages(full_conversation)
                 .response_format(response_format)
                 .build()?
-        },
-        None => {
-            CreateChatCompletionRequestArgs::default()
+        }
+        None => CreateChatCompletionRequestArgs::default()
             .max_tokens(config.context_max_tokens)
             .model(model)
             .stop(config.stop_words.clone())
             .messages(full_conversation)
-            .build()?
-        }
+            .build()?,
     };
 
     debug!("Sending request: {:?}", request);
@@ -278,7 +300,7 @@ async fn fetch_response<'a>(
     let mut response_string = String::new();
 
     let response = client.chat().create(request).await?;
-    
+
     response.choices.iter().for_each(|chat_choice| {
         let message = chat_choice.message.clone();
         let message_content = message.content;
@@ -297,7 +319,7 @@ async fn fetch_response<'a>(
             refusal: None,
             audio: None,
             tool_calls: None,
-            function_call: None
+            function_call: None,
         });
 
     Ok(chat_completion_request_message)
@@ -327,29 +349,27 @@ pub async fn ask<'a>(
     let _added_memories_to_brain_result =
         add_memories_to_brain(&vector_store, &question, &mut session_messages, &mut brain);
 
-        let mut question = if let Some(prepend_content) = template.pre_user_message_content.clone() {
-            format!("{} {}", prepend_content, question)
-        } else {
-            question
-        };
+    let mut question = if let Some(prepend_content) = template.pre_user_message_content.clone() {
+        format!("{} {}", prepend_content, question)
+    } else {
+        question
+    };
 
-        question = if let Some(append_content) = template.post_user_message_content.clone() {
-            format!("{} {}", question, append_content)
-        } else {
-            question
-        };
+    question = if let Some(append_content) = template.post_user_message_content.clone() {
+        format!("{} {}", question, append_content)
+    } else {
+        question
+    };
 
-    let chat_completion_request_message = ChatCompletionRequestMessage::User(
-        ChatCompletionRequestUserMessage { 
-            content: ChatCompletionRequestUserMessageContent::Text(question), 
-            name: None
-        }
-    );
+    let chat_completion_request_message =
+        ChatCompletionRequestMessage::User(ChatCompletionRequestUserMessage {
+            content: ChatCompletionRequestUserMessageContent::Text(question),
+            name: None,
+        });
 
-    let _convo_messages_insertion_result =
-        session_messages
-            .conversation_messages
-            .push(chat_completion_request_message);
+    let _convo_messages_insertion_result = session_messages
+        .conversation_messages
+        .push(chat_completion_request_message);
 
     let assistant_response: ChatCompletionRequestMessage = match config.should_stream {
         Some(true) => {
@@ -363,7 +383,7 @@ pub async fn ask<'a>(
                 brain,
             )
             .await?
-        },
+        }
         Some(false) => {
             fetch_response(
                 &client,
@@ -375,7 +395,7 @@ pub async fn ask<'a>(
                 brain,
             )
             .await?
-        },
+        }
         None => {
             fetch_response(
                 &client,
@@ -392,15 +412,17 @@ pub async fn ask<'a>(
 
     let assistant_message_content = match assistant_response {
         ChatCompletionRequestMessage::Assistant(assistant_message) => assistant_message.content,
-        _ => None
+        _ => None,
     };
 
     if let Some(assistant_response_content) = assistant_message_content {
         if let Text(assistant_response_content_text) = assistant_response_content {
-            let _diesel_sqlite_response = session_messages
-                .insert_message("assistant".to_string(), assistant_response_content_text.clone());
+            let _diesel_sqlite_response = session_messages.insert_message(
+                "assistant".to_string(),
+                assistant_response_content_text.clone(),
+            );
 
-            return Ok(assistant_response_content_text.clone())
+            return Ok(assistant_response_content_text.clone());
         }
     };
 
@@ -552,14 +574,16 @@ fn prepare_messages(
             .preamble_messages
             .append(&mut template_messages);
     } else {
-        let chat_completion_message = ChatCompletionRequestMessage::System(
-            ChatCompletionRequestSystemMessage {
-                content: ChatCompletionRequestSystemMessageContent::Text(template.system_prompt.clone()),
-                name: None
-            }
-        );
+        let chat_completion_message =
+            ChatCompletionRequestMessage::System(ChatCompletionRequestSystemMessage {
+                content: ChatCompletionRequestSystemMessageContent::Text(
+                    template.system_prompt.clone(),
+                ),
+                name: None,
+            });
 
-        let mut preamble_messages: Vec<ChatCompletionRequestMessage> = vec![chat_completion_message];
+        let mut preamble_messages: Vec<ChatCompletionRequestMessage> =
+            vec![chat_completion_message];
         let mut template_messages = template.messages.clone();
 
         session_messages
@@ -609,35 +633,37 @@ fn prepare_messages_for_existing_session(
                         let role = SessionMessages::string_to_role(&msg.role);
 
                         let msg_obj = match role {
-                            Role::System => {
-                                ChatCompletionRequestMessage::System(
-                                   ChatCompletionRequestSystemMessage {
-                                        content: ChatCompletionRequestSystemMessageContent::Text(msg.content.clone()),
-                                        name: None
-                                   }
-                                )
-                            },
-                            Role::User => {
-                                ChatCompletionRequestMessage::User(
-                                   ChatCompletionRequestUserMessage {
-                                        content: ChatCompletionRequestUserMessageContent::Text(msg.content.clone()),
-                                        name: None
-                                   }
-                                )
-                            },
-                            Role::Assistant => {
-                                ChatCompletionRequestMessage::Assistant(
-                                   ChatCompletionRequestAssistantMessage {
-                                        content: Some(ChatCompletionRequestAssistantMessageContent::Text(msg.content.clone())),
-                                        name: None,
-                                        refusal: None,
-                                        audio: None,
-                                        tool_calls: None,
-                                        function_call: None
-                                   }
-                                )
-                            },
-                            _ => panic!("We don't handle this Role yet!!")
+                            Role::System => ChatCompletionRequestMessage::System(
+                                ChatCompletionRequestSystemMessage {
+                                    content: ChatCompletionRequestSystemMessageContent::Text(
+                                        msg.content.clone(),
+                                    ),
+                                    name: None,
+                                },
+                            ),
+                            Role::User => ChatCompletionRequestMessage::User(
+                                ChatCompletionRequestUserMessage {
+                                    content: ChatCompletionRequestUserMessageContent::Text(
+                                        msg.content.clone(),
+                                    ),
+                                    name: None,
+                                },
+                            ),
+                            Role::Assistant => ChatCompletionRequestMessage::Assistant(
+                                ChatCompletionRequestAssistantMessage {
+                                    content: Some(
+                                        ChatCompletionRequestAssistantMessageContent::Text(
+                                            msg.content.clone(),
+                                        ),
+                                    ),
+                                    name: None,
+                                    refusal: None,
+                                    audio: None,
+                                    tool_calls: None,
+                                    function_call: None,
+                                },
+                            ),
+                            _ => panic!("We don't handle this Role yet!!"),
                         };
 
                         session_messages.preamble_messages.push(msg_obj);
@@ -673,27 +699,36 @@ fn prepare_messages_for_existing_session(
 
                         let (role, content) = match message {
                             ChatCompletionRequestMessage::System(system_message) => {
-                                if let ChatCompletionRequestSystemMessageContent::Text(message_content) = system_message.content {
+                                if let ChatCompletionRequestSystemMessageContent::Text(
+                                    message_content,
+                                ) = system_message.content
+                                {
                                     (Some(Role::System), Some(message_content))
                                 } else {
                                     (None, None)
                                 }
-                            },
+                            }
                             ChatCompletionRequestMessage::User(user_message) => {
-                                if let ChatCompletionRequestUserMessageContent::Text(message_content) = user_message.content {
+                                if let ChatCompletionRequestUserMessageContent::Text(
+                                    message_content,
+                                ) = user_message.content
+                                {
                                     (Some(Role::User), Some(message_content))
                                 } else {
                                     (None, None)
                                 }
-                            },
+                            }
                             ChatCompletionRequestMessage::Assistant(assistant_message) => {
-                                if let Some(ChatCompletionRequestAssistantMessageContent::Text(message_content)) = assistant_message.content {
+                                if let Some(ChatCompletionRequestAssistantMessageContent::Text(
+                                    message_content,
+                                )) = assistant_message.content
+                                {
                                     (Some(Role::Assistant), Some(message_content))
                                 } else {
                                     (None, None)
                                 }
-                            },
-                            _ => (None, None)
+                            }
+                            _ => (None, None),
                         };
 
                         if let Some(msg_content) = content {
@@ -704,9 +739,9 @@ fn prepare_messages_for_existing_session(
                                 dynamic: false,
                                 conversation_id: conversation.id,
                             };
-    
+
                             let _res = session_messages.persist_message(&serialized_message);
-    
+
                             session_messages.conversation_messages.push(msg_clone);
                         }
                     }
@@ -768,7 +803,9 @@ pub async fn interactive_mode<'a>(
         stdout.flush()?;
 
         let mut input = String::new();
-        std::io::stdin().read_to_string(&mut input).expect("Failed to read from stdin");
+        std::io::stdin()
+            .read_to_string(&mut input)
+            .expect("Failed to read from stdin");
 
         stdout.execute(SetForegroundColor(Color::Reset))?;
 
@@ -798,14 +835,15 @@ pub async fn interactive_mode<'a>(
             input
         };
 
-        let chat_completion_message = ChatCompletionRequestMessage::User(
-            ChatCompletionRequestUserMessage { content: ChatCompletionRequestUserMessageContent::Text(input.to_string()), name: None }
-        );
+        let chat_completion_message =
+            ChatCompletionRequestMessage::User(ChatCompletionRequestUserMessage {
+                content: ChatCompletionRequestUserMessageContent::Text(input.to_string()),
+                name: None,
+            });
 
-        let _convo_messages_insertion_result =
-            session_messages
-                .conversation_messages
-                .push(chat_completion_message);
+        let _convo_messages_insertion_result = session_messages
+            .conversation_messages
+            .push(chat_completion_message);
 
         // Get the AI's response using the OpenAI API
         let assistant_response = match stream_response(
@@ -829,20 +867,20 @@ pub async fn interactive_mode<'a>(
         session_messages
             .conversation_messages
             .push(assistant_response.clone());
-        
+
         match assistant_response {
             ChatCompletionRequestMessage::Assistant(assistant_message) => {
-
-                if let Some(ChatCompletionRequestAssistantMessageContent::Text(assistant_message_content)) = assistant_message.content {
-                    let _diesel_sqlite_response = session_messages.insert_message(
-                        "assistant".to_string(),
-                        assistant_message_content.clone(),
-                    );
+                if let Some(ChatCompletionRequestAssistantMessageContent::Text(
+                    assistant_message_content,
+                )) = assistant_message.content
+                {
+                    let _diesel_sqlite_response = session_messages
+                        .insert_message("assistant".to_string(), assistant_message_content.clone());
 
                     env::set_var("AJ", assistant_message_content);
                 }
-            },
-            _ => ()
+            }
+            _ => (),
         }
     }
 
@@ -869,7 +907,7 @@ mod tests {
             stop_words: vec!["\n<|im_start|>".to_string(), "<|im_end|>".to_string()],
             session_db_url: "/Users/tg/Projects/awful_aj/test.db".to_string(),
             session_name: None,
-            should_stream: None
+            should_stream: None,
         }
     }
 
@@ -877,16 +915,20 @@ mod tests {
     fn mock_template() -> ChatTemplate {
         setup();
 
-        let chat_completion_request = ChatCompletionRequestMessage::User(
-            ChatCompletionRequestUserMessage { content: ChatCompletionRequestUserMessageContent::Text("How do I read a file in Rust?".to_string()), name: None }
-        );
+        let chat_completion_request =
+            ChatCompletionRequestMessage::User(ChatCompletionRequestUserMessage {
+                content: ChatCompletionRequestUserMessageContent::Text(
+                    "How do I read a file in Rust?".to_string(),
+                ),
+                name: None,
+            });
 
         ChatTemplate {
             system_prompt: "You are Awful Jade, a helpful AI assistant.".to_string(),
             messages: vec![chat_completion_request],
             response_format: None,
             pre_user_message_content: None,
-            post_user_message_content: None
+            post_user_message_content: None,
         }
     }
 
@@ -912,7 +954,7 @@ mod tests {
             stop_words: vec!["".to_string()],
             session_db_url: "".to_string(),
             session_name: None,
-            should_stream: None
+            should_stream: None,
         };
         let messages = prepare_messages(&template, &config, Some(&&mut brain));
         assert!(messages.is_ok(), "Failed to prepare messages");
