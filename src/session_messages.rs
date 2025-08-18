@@ -79,9 +79,9 @@ impl SessionMessages {
     ) -> Message {
         Message {
             id: None,
-            role: role,
-            content: content,
-            dynamic: dynamic,
+            role,
+            content,
+            dynamic,
             conversation_id: Some(conversation.id.unwrap()),
         }
     }
@@ -94,6 +94,7 @@ impl SessionMessages {
     ///
     /// # Returns
     /// - `ChatCompletionRequestMessage`: New chat message.
+    #[allow(deprecated)]
     pub fn serialize_chat_completion_message(
         role: Role,
         content: String,
@@ -227,9 +228,9 @@ impl SessionMessages {
             Ok(convo) => {
                 let chat_message = Self::serialize_chat_message(role, content, false, &convo);
 
-                return self.persist_message(&chat_message);
+                self.persist_message(&chat_message)
             }
-            Err(err) => return Err(err),
+            Err(err) => Err(err),
         }
     }
 
@@ -293,12 +294,12 @@ impl SessionMessages {
     ///
     /// # Returns
     /// - `Role`: Parsed role.
-    pub fn string_to_role(role: &String) -> Role {
-        match role.as_str() {
+    pub fn string_to_role(role: &str) -> Role {
+        match role {
             "system" => Role::System,
             "user" => Role::User,
             "assistant" => Role::Assistant,
-            err => panic!("Role in message not allowed: {}", err),
+            err => panic!("Role in message not allowed: {err}"),
         }
     }
 

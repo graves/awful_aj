@@ -8,14 +8,14 @@
 extern crate diesel;
 
 use async_openai::types::{ChatCompletionRequestMessage, ChatCompletionRequestUserMessage};
-use awful_aj::brain::{Brain, Memory};
+use awful_aj::brain::Brain;
+use awful_aj::vector_store::VectorStore;
 use awful_aj::{api, commands, config, template};
 use clap::Parser;
 use directories::ProjectDirs;
 use once_cell::sync::OnceCell;
 use std::{env, error::Error, fs, path::PathBuf, vec};
 use tracing::{debug, info};
-use awful_aj::vector_store::VectorStore;
 
 // A static OnceCell to hold the tracing subscriber, ensuring it is only initialized once.
 static TRACING: OnceCell<()> = OnceCell::new();
@@ -260,7 +260,7 @@ fn main() -> io::Result<()> {
         messages: vec![user_message, system_message],
         response_format: None,
         pre_user_message_content: None,
-        post_user_message_content: None
+        post_user_message_content: None,
     };
     let template_yaml = serde_yaml::to_string(&template)?;
     fs::write(template_path, template_yaml)?;
@@ -278,7 +278,7 @@ fn main() -> io::Result<()> {
         stop_words: vec!["\n<|im_start|>".to_string(), "<|im_end|>".to_string()],
         session_db_url: "aj.db".to_string(),
         session_name: None,
-        should_stream: None
+        should_stream: None,
     };
     let config_yaml = serde_yaml::to_string(&config)?;
     fs::write(config_path, config_yaml)?;

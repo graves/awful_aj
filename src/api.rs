@@ -22,7 +22,6 @@
 use crate::{
     brain::{Brain, Memory},
     config::{AwfulJadeConfig, establish_connection},
-    schema::awful_configs,
     session_messages::SessionMessages,
     template::ChatTemplate,
     vector_store::VectorStore,
@@ -34,8 +33,8 @@ use async_openai::{
         ChatCompletionRequestAssistantMessage, ChatCompletionRequestAssistantMessageContent,
         ChatCompletionRequestMessage, ChatCompletionRequestSystemMessage,
         ChatCompletionRequestSystemMessageContent, ChatCompletionRequestUserMessage,
-        ChatCompletionRequestUserMessageContent, CreateAssistantRequest,
-        CreateChatCompletionRequestArgs, ResponseFormat, ResponseFormatJsonSchema, Role,
+        ChatCompletionRequestUserMessageContent, CreateChatCompletionRequestArgs, ResponseFormat,
+        Role,
     },
 };
 use crossterm::{
@@ -84,6 +83,7 @@ fn create_client(config: &AwfulJadeConfig) -> Result<Client<OpenAIConfig>, Box<d
 ///
 /// # Returns
 /// - `Result<ChatCompletionRequestMessage, Box<dyn Error>>`: The assistant's response message.
+#[allow(deprecated)]
 async fn stream_response<'a>(
     client: &Client<OpenAIConfig>,
     model: String,
@@ -94,7 +94,7 @@ async fn stream_response<'a>(
     _brain: Option<&mut Brain<'a>>,
 ) -> Result<ChatCompletionRequestMessage, Box<dyn Error>> {
     while session_messages.should_eject_message() {
-        if session_messages.conversation_messages.len() > 0 {
+        if !session_messages.conversation_messages.is_empty() {
             let ejected_user_message = session_messages.conversation_messages.remove(0);
             let ejected_assistant_message = session_messages.conversation_messages.remove(0);
 
@@ -107,7 +107,7 @@ async fn stream_response<'a>(
                             the_vector_store.embed_text_to_vector(&user_message_content)?;
                         let memory = Memory::new(Role::User, user_message_content);
                         let res = the_vector_store.add_vector_with_content(vector, memory);
-                        if !res.is_err() {
+                        if res.is_ok() {
                             the_vector_store.build()?;
                         }
                     }
@@ -124,7 +124,7 @@ async fn stream_response<'a>(
                             the_vector_store.embed_text_to_vector(&assistant_message_content)?;
                         let memory = Memory::new(Role::User, assistant_message_content);
                         let res = the_vector_store.add_vector_with_content(vector, memory);
-                        if !res.is_err() {
+                        if res.is_ok() {
                             the_vector_store.build()?;
                         }
                     }
@@ -178,13 +178,13 @@ async fn stream_response<'a>(
                 response.choices.iter().for_each(|chat_choice| {
                     if let Some(ref content) = chat_choice.delta.content {
                         response_string.push_str(content);
-                        write!(lock, "{}", content).unwrap();
+                        write!(lock, "{content}").unwrap();
                     }
                 });
             }
             Err(err) => {
                 error!("Received error: {}", err);
-                writeln!(lock, "error: {}", err).unwrap();
+                writeln!(lock, "error: {err}").unwrap();
             }
         }
         stdout.flush()?;
@@ -211,6 +211,7 @@ async fn stream_response<'a>(
     Ok(chat_completion_request_message)
 }
 
+#[allow(clippy::collapsible_match, deprecated)]
 async fn fetch_response<'a>(
     client: &Client<OpenAIConfig>,
     model: String,
@@ -221,10 +222,10 @@ async fn fetch_response<'a>(
     _brain: Option<&mut Brain<'a>>,
 ) -> Result<ChatCompletionRequestMessage, Box<dyn Error>> {
     while session_messages.should_eject_message() {
-        if session_messages.conversation_messages.len() > 0 {
+        if !session_messages.conversation_messages.is_empty() {
             let ejected_user_message = session_messages.conversation_messages.remove(0);
 
-            let ejected_assistant_message = if session_messages.conversation_messages.len() > 0 {
+            let ejected_assistant_message = if !session_messages.conversation_messages.is_empty() {
                 Some(session_messages.conversation_messages.remove(0))
             } else {
                 None
@@ -239,7 +240,7 @@ async fn fetch_response<'a>(
                             the_vector_store.embed_text_to_vector(&user_message_content)?;
                         let memory = Memory::new(Role::User, user_message_content);
                         let res = the_vector_store.add_vector_with_content(vector, memory);
-                        if !res.is_err() {
+                        if res.is_ok() {
                             the_vector_store.build()?;
                         }
                     }
@@ -337,6 +338,7 @@ use crate::api::ChatCompletionRequestAssistantMessageContent::Text;
 ///
 /// # Returns
 /// - `Result<(), Box<dyn Error>>`: Success or error.
+#[allow(clippy::collapsible_match)]
 pub async fn ask<'a>(
     config: &AwfulJadeConfig,
     question: String,
@@ -350,13 +352,13 @@ pub async fn ask<'a>(
         add_memories_to_brain(&vector_store, &question, &mut session_messages, &mut brain);
 
     let mut question = if let Some(prepend_content) = template.pre_user_message_content.clone() {
-        format!("{} {}", prepend_content, question)
+        format!("{prepend_content} {question}")
     } else {
         question
     };
 
     question = if let Some(append_content) = template.post_user_message_content.clone() {
-        format!("{} {}", question, append_content)
+        format!("{question} {append_content}")
     } else {
         question
     };
@@ -367,7 +369,7 @@ pub async fn ask<'a>(
             name: None,
         });
 
-    let _convo_messages_insertion_result = session_messages
+    session_messages
         .conversation_messages
         .push(chat_completion_request_message);
 
@@ -377,8 +379,8 @@ pub async fn ask<'a>(
                 &client,
                 config.model.clone(),
                 &mut session_messages,
-                &config,
-                &template,
+                config,
+                template,
                 vector_store,
                 brain,
             )
@@ -389,8 +391,8 @@ pub async fn ask<'a>(
                 &client,
                 config.model.clone(),
                 &mut session_messages,
-                &config,
-                &template,
+                config,
+                template,
                 vector_store,
                 brain,
             )
@@ -401,8 +403,8 @@ pub async fn ask<'a>(
                 &client,
                 config.model.clone(),
                 &mut session_messages,
-                &config,
-                &template,
+                config,
+                template,
                 vector_store,
                 brain,
             )
@@ -445,13 +447,13 @@ pub async fn ask<'a>(
 fn get_session_messages(
     brain: &Option<&mut Brain>,
     config: &AwfulJadeConfig,
-    mut template: &ChatTemplate,
+    template: &ChatTemplate,
     question: &String,
 ) -> Result<SessionMessages, Box<dyn Error>> {
     let session_messages = if config.session_name.is_some() && brain.is_some() {
         let prepare_brain = brain.as_ref().expect("We need a Brain here!");
         let session_messages =
-            prepare_messages_for_existing_session(&mut template, config, prepare_brain)?;
+            prepare_messages_for_existing_session(template, config, prepare_brain)?;
 
         let mut connection = establish_connection(&config.session_db_url);
 
@@ -486,9 +488,7 @@ fn get_session_messages(
         session_messages
     } else {
         let prepare_brain = brain.as_ref();
-        let session_messages = prepare_messages(&mut template, &config, prepare_brain).unwrap();
-
-        session_messages
+        prepare_messages(template, config, prepare_brain).unwrap()
     };
 
     Ok(session_messages)
@@ -509,20 +509,20 @@ fn get_session_messages(
 /// - `Result<(), Box<dyn Error>>`: Success or error.
 fn add_memories_to_brain(
     vector_store: &Option<&mut VectorStore>,
-    question: &String,
+    question: &str,
     session_messages: &mut SessionMessages,
     brain: &mut Option<&mut Brain>,
 ) -> Result<(), Box<dyn Error>> {
     if let Some(ref vector_store) = vector_store {
         // Embed the user's input
-        let vector = vector_store.embed_text_to_vector(&question)?;
+        let vector = vector_store.embed_text_to_vector(question)?;
 
         // Query the VectorStore to get relevant content based on user's input
         let neighbor_vectors = vector_store.index.search_nodes(&vector, 3); // Adjust the number of neighbors as needed
 
         let neighbor_vec_distances = neighbor_vectors.iter().map(|v| {
             let (node, distance): (Node<f32, usize>, f32) = v.clone();
-            (node.vectors().clone(), node.idx().clone(), distance)
+            (node.vectors().clone(), *node.idx(), distance)
         });
 
         for (_vector, id, euclidean_distance) in neighbor_vec_distances {
@@ -611,6 +611,7 @@ use diesel::prelude::*;
 ///
 /// # Returns
 /// - `Result<SessionMessages, Box<dyn Error>>`: Prepared session messages.
+#[allow(deprecated)]
 fn prepare_messages_for_existing_session(
     template: &ChatTemplate,
     config: &AwfulJadeConfig,
@@ -627,7 +628,7 @@ fn prepare_messages_for_existing_session(
 
             if let Ok(mut recent_msgs) = recent_messages {
                 // If there are recent_msgs then the first 3 are System Prompt, Brain Message, Assistant Acknowledgement, the N Template Messages
-                if recent_msgs.len() > 0 {
+                if !recent_msgs.is_empty() {
                     let preamble_messages = recent_msgs.drain(0..(3 + template.messages.len()));
                     for msg in preamble_messages {
                         let role = SessionMessages::string_to_role(&msg.role);
@@ -751,8 +752,8 @@ fn prepare_messages_for_existing_session(
             Ok(session_messages)
         }
         Err(_) => {
-            let mut prepare_brain = brain;
-            prepare_messages(template, config, Some(&mut prepare_brain))
+            let prepare_brain = brain;
+            prepare_messages(template, config, Some(prepare_brain))
         }
     }
 }
@@ -771,6 +772,7 @@ use std::io::Read;
 ///
 /// # Returns
 /// - `Result<(), Box<dyn Error>>`: Success or error.
+#[allow(clippy::single_match)]
 pub async fn interactive_mode<'a>(
     config: &AwfulJadeConfig,
     mut vector_store: VectorStore,
@@ -824,13 +826,13 @@ pub async fn interactive_mode<'a>(
         );
 
         input = if let Some(prepend_content) = template.pre_user_message_content.clone() {
-            format!("{} {}", prepend_content, input)
+            format!("{prepend_content} {input}")
         } else {
             input
         };
 
         input = if let Some(append_content) = template.post_user_message_content.clone() {
-            format!("{} {}", input, append_content)
+            format!("{input} {append_content}")
         } else {
             input
         };
@@ -841,7 +843,7 @@ pub async fn interactive_mode<'a>(
                 name: None,
             });
 
-        let _convo_messages_insertion_result = session_messages
+        session_messages
             .conversation_messages
             .push(chat_completion_message);
 
@@ -850,8 +852,8 @@ pub async fn interactive_mode<'a>(
             &client,
             config.model.clone(),
             &mut session_messages,
-            &config,
-            &template,
+            config,
+            template,
             Some(&mut vector_store),
             Some(&mut brain),
         )
@@ -859,7 +861,7 @@ pub async fn interactive_mode<'a>(
         {
             Ok(response) => response,
             Err(e) => {
-                eprintln!("Error: {}", e);
+                eprintln!("Error: {e}");
                 continue; // This will skip the current iteration of the loop and proceed to the next one
             }
         };
