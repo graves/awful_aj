@@ -12,13 +12,13 @@ use regex::Regex;
 use rust_bert::pipelines::sentence_embeddings::{
     SentenceEmbeddingsBuilder, SentenceEmbeddingsModel,
 };
-use serde::{ser::SerializeStruct, Serialize, Serializer};
+use serde::{Serialize, Serializer, ser::SerializeStruct};
 use std::collections::HashMap;
 use std::error::Error;
 use std::path::PathBuf;
 
-use crate::config_dir;
 use crate::brain::Memory;
+use crate::config_dir;
 
 /// A persistent vector database for mapping high-dimensional vectors to associated memory content.
 ///
@@ -39,7 +39,7 @@ pub struct VectorStore {
     /// Mapping of vector IDs to their corresponding memory content.
     id_to_memory: HashMap<usize, Memory>,
     /// A UUID derived from the session name for consistent serialization.
-    uuid: u64
+    uuid: u64,
 }
 
 impl Serialize for VectorStore {
@@ -47,7 +47,6 @@ impl Serialize for VectorStore {
     where
         S: Serializer,
     {
-
         let mut state = serializer.serialize_struct("VectorStore", 6)?;
         state.serialize_field("index", &self.index)?;
         state.serialize_field("dimension", &self.dimension)?;
@@ -75,7 +74,7 @@ impl<'de> Deserialize<'de> for VectorStore {
             Model,
             CurrentId,
             IdToMemory,
-            Uuid
+            Uuid,
         }
 
         impl<'de> Deserialize<'de> for Field {
@@ -146,8 +145,9 @@ impl<'de> Deserialize<'de> for VectorStore {
                     .next_element()?
                     .ok_or_else(|| de::Error::invalid_length(1, &self))?;
 
-                let vs = VectorStore::from_serialized(index, dimension, current_id, id_to_memory, uuid)
-                    .unwrap();
+                let vs =
+                    VectorStore::from_serialized(index, dimension, current_id, id_to_memory, uuid)
+                        .unwrap();
                 Ok(vs)
             }
 
@@ -208,16 +208,23 @@ impl<'de> Deserialize<'de> for VectorStore {
                     current_id.ok_or_else(|| de::Error::missing_field("current_id"))?;
                 let id_to_memory =
                     id_to_memory.ok_or_else(|| de::Error::missing_field("id_to_memory"))?;
-                let uuid =
-                    uuid.ok_or_else(|| de::Error::missing_field("uuid"))?;
+                let uuid = uuid.ok_or_else(|| de::Error::missing_field("uuid"))?;
 
-                let vs = VectorStore::from_serialized(index, dimension, current_id, id_to_memory, uuid)
-                    .unwrap();
+                let vs =
+                    VectorStore::from_serialized(index, dimension, current_id, id_to_memory, uuid)
+                        .unwrap();
                 Ok(vs)
             }
         }
 
-        const FIELDS: &[&str] = &["index", "dimension", "model", "current_id", "id_to_memory", "uuid"];
+        const FIELDS: &[&str] = &[
+            "index",
+            "dimension",
+            "model",
+            "current_id",
+            "id_to_memory",
+            "uuid",
+        ];
         deserializer.deserialize_struct("VectorStore", FIELDS, VectorStoreVisitor)
     }
 }
@@ -231,7 +238,10 @@ impl VectorStore {
     ///
     /// # Returns
     /// - `Result<Self, Box<dyn Error>>`: Initialized VectorStore or error.
-    pub fn new(dimension: usize, the_session_name: String) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(
+        dimension: usize,
+        the_session_name: String,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let params = HNSWParams::default();
         let index = HNSWIndex::new(dimension, &params);
         let model = SentenceEmbeddingsBuilder::local("all-mini-lm-l12-v2")
@@ -242,7 +252,7 @@ impl VectorStore {
         let mut uuid: u64 = 0;
         for byte in digest.as_bytes() {
             uuid += *byte as u64
-        };
+        }
 
         Ok(Self {
             index,
@@ -250,7 +260,7 @@ impl VectorStore {
             model,
             current_id: 0,
             id_to_memory: HashMap::new(), // Initialize the HashMap here
-            uuid
+            uuid,
         })
     }
 
@@ -262,12 +272,16 @@ impl VectorStore {
     ///
     /// # Returns
     /// - `Result<(), Box<dyn Error>>`: Success or failure.
-    pub fn serialize(&mut self, vector_store_path: &PathBuf, the_session_name: String) -> Result<(), Box<dyn Error>> {
+    pub fn serialize(
+        &mut self,
+        vector_store_path: &PathBuf,
+        the_session_name: String,
+    ) -> Result<(), Box<dyn Error>> {
         let digest = sha256::digest(the_session_name);
         let mut uuid: u64 = 0;
         for byte in digest.as_bytes() {
             uuid += *byte as u64
-        };
+        }
 
         let index_file_name = format!("{}_hnsw_index.bin", uuid);
         let index_file = config_dir()?.join(index_file_name);
@@ -296,11 +310,23 @@ impl VectorStore {
         dimension: usize,
         current_id: usize,
         id_to_memory: HashMap<usize, Memory>,
-        uuid: u64
+        uuid: u64,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let model = SentenceEmbeddingsBuilder::local("all-mini-lm-l12-v2")
+        let model_root = Self::model_dir()?;
+        // (optional) sanity check
+        if !model_root.join("config.json").exists() {
+            return Err(format!("BERT model not found at {}", model_root.display()).into());
+        }
+
+        // ✅ pass a Path/PathBuf, not a Result<&str, &str>
+        let model = SentenceEmbeddingsBuilder::local(&model_root)
             .create_model()
-            .unwrap();
+            .map_err(|e| {
+                format!(
+                    "failed to load sentence model from {}: {e}",
+                    model_root.display()
+                )
+            })?;
 
         let index_file_name = format!("{}_hnsw_index.bin", uuid);
         let index_file = config_dir()?.join(index_file_name);
@@ -312,7 +338,7 @@ impl VectorStore {
             model,
             current_id: current_id,
             id_to_memory: id_to_memory, // Initialize the HashMap here
-            uuid
+            uuid,
         })
     }
 
@@ -474,6 +500,10 @@ impl VectorStore {
                 accum
             });
         return distance.sqrt();
+    }
+
+    fn model_dir() -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
+        Ok(crate::config_dir()?.join("all-mini-lm-l12-v2"))
     }
 }
 

@@ -4,7 +4,6 @@
 //! configuration loading, and command execution based on user input from the command line.
 
 // Importing necessary modules and libraries
-#![feature(ascii_char)]
 extern crate diesel;
 
 use async_openai::types::{ChatCompletionRequestMessage, ChatCompletionRequestUserMessage};
@@ -60,9 +59,16 @@ async fn run() -> Result<(), Box<dyn Error>> {
             question,
             template,
             session,
+            model_dir,
+            no_cwd_link,
         } => {
             debug!("Entering ask mode");
+            // Ensure model is present (download + unzip if not)
+            let model_path = awful_aj::ensure_all_mini().await?;
+            info!("Using BERT model at {}", model_path.display());
+
             let config_path = determine_config_path()?;
+
             let mut jade_config = config::load_config(config_path.to_str().unwrap())?;
 
             if session.is_some() {
@@ -73,8 +79,17 @@ async fn run() -> Result<(), Box<dyn Error>> {
 
             handle_ask_command(jade_config, question, template).await?;
         }
-        commands::Commands::Interactive { template, session } => {
+        commands::Commands::Interactive {
+            template,
+            session,
+            model_dir,
+            no_cwd_link,
+        } => {
             debug!("Entering interactive mode");
+            // Ensure model is present (download + unzip if not)
+            let model_path = awful_aj::ensure_all_mini().await?;
+            info!("Using BERT model at {}", model_path.display());
+
             let config_path = determine_config_path()?;
             let mut jade_config = config::load_config(config_path.to_str().unwrap())?;
 

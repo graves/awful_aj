@@ -59,6 +59,14 @@ pub enum Commands {
 
         #[arg(name = "session", short = 's')]
         session: Option<String>,
+
+        /// Path to the all-mini-lm-l12-v2 directory (overrides config_dir)
+        #[arg(long, env = "AWFUL_AJ_BERT_DIR")]
+        model_dir: Option<std::path::PathBuf>,
+
+        /// If set, DO NOT create ./all-mini-lm-l12-v2 symlink/junction in CWD
+        #[arg(long)]
+        no_cwd_link: bool,
     },
 
     /// The 'interactive' subcommand, which can have an optional name for the conversation.
@@ -71,6 +79,14 @@ pub enum Commands {
 
         #[arg(name = "session", short = 's')]
         session: Option<String>,
+
+        /// Path to the all-mini-lm-l12-v2 directory (overrides config_dir)
+        #[arg(long, env = "AWFUL_AJ_BERT_DIR")]
+        model_dir: Option<std::path::PathBuf>,
+
+        /// If set, DO NOT create ./all-mini-lm-l12-v2 symlink/junction in CWD
+        #[arg(long)]
+        no_cwd_link: bool,
     },
 
     /// The 'init' subcommand, which takes no arguments and is used for initialization.

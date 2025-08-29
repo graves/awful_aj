@@ -407,9 +407,11 @@ dependencies = [
  "crossterm",
  "diesel",
  "directories",
+ "dirs 5.0.1",
  "futures",
  "hora",
  "httpmock",
+ "junction",
  "once_cell",
  "regex",
  "reqwest 0.11.27",
@@ -424,6 +426,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "zip",
 ]
 
 [[package]]
@@ -1100,6 +1103,15 @@ name = "directories"
 version = "5.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9a49173b84e034382284f27f1af4dcbbd231ffa358c0fe316541a7337f376a35"
+dependencies = [
+ "dirs-sys 0.4.1",
+]
+
+[[package]]
+name = "dirs"
+version = "5.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "44c45a9d03d6676652bcb5e724c7e988de1acad23a711b5217ab9cbecbec2225"
 dependencies = [
  "dirs-sys 0.4.1",
 ]
@@ -2152,6 +2164,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "junction"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72bbdfd737a243da3dfc1f99ee8d6e166480f17ab4ac84d7c34aacd73fc7bd16"
+dependencies = [
+ "scopeguard",
+ "windows-sys 0.52.0",
+]
+
+[[package]]
 name = "kv-log-macro"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3153,7 +3175,7 @@ version = "0.23.0"
 source = "git+https://github.com/graves/rust-bert#03acfbd0b2747b32cfae3c772231dbc77bc73980"
 dependencies = [
  "cached-path",
- "dirs",
+ "dirs 6.0.0",
  "half",
  "lazy_static",
  "ordered-float",
