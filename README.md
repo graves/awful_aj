@@ -5,7 +5,7 @@
 
 Awful Jade (aka **`aj`**) is your command-line sidekick for working with Large Language Models (LLMs).  
 
-Think of it as an _LLM Swiss Army knife with the best intentions_ 😇:  
+Think of it as an _LLM Swiss Army knife with the best intentions_ 😇.
 
 > Ask questions, run interactive sessions, sanitize messy OCR book dumps, synthesize exam questions…  
 all without leaving your terminal.
