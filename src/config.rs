@@ -1,20 +1,45 @@
-//! This module provides functionality for loading and handling the application's configuration.
+//! # Configuration module
 //!
-//! It defines the `AwfulJadeConfig` struct, which holds the configuration parameters,
-//! and a `load_config` function to load the configuration from a file.
+//! This module defines the runtime configuration for Awful Jade and the helpers
+//! to **load** it from YAML and **sync** it with the session database.
 //!
-//! # Examples
+//! The central type is [`AwfulJadeConfig`], which is deserialized from a
+//! `config.yaml` you manage in the user’s config directory (see `lib.rs`’s
+//! [`crate::config_dir`]). For named conversations, you can call
+//! [`AwfulJadeConfig::ensure_conversation_and_config`] to create or link a
+//! conversation row and persist a snapshot of the config in the DB.
 //!
-//! Loading the configuration from a file:
+//! ## Typical flow
+//! 1. Load config from YAML via [`load_config`].
+//! 2. If running in a named session, call
+//!    [`AwfulJadeConfig::ensure_conversation_and_config`] with the
+//!    session name; this guarantees a `conversations` row and (if needed)
+//!    an `awful_configs` row that mirrors the current in-memory config.
+//! 3. Proceed to build prompts / issue API requests using these settings.
 //!
+//! ## YAML shape
+//! ```yaml
+//! api_key: "sk-...or-empty-for-local-backend..."
+//! api_base: "http://localhost:5001/v1"
+//! model: "qwen-or-your-favorite"
+//! context_max_tokens: 8192
+//! assistant_minimum_context_tokens: 2048
+//! stop_words: ["\n<|im_start|>", "<|im_end|>"]
+//! session_db_url: "/absolute/or/relative/path/to/aj.db"
+//! # Optional:
+//! session_name: "marketing-demo"
+//! should_stream: true
+//! ```
+//!
+//! ## Examples
+//! Load from disk, then ensure there is a DB conversation bound to a session:
 //! ```no_run
 //! use awful_aj::config::{AwfulJadeConfig, load_config};
 //!
-//! let config_file_path = "/path/to/config.yaml";
-//! let config: AwfulJadeConfig = load_config(config_file_path).unwrap();
-//! println!("{:?}", config);
+//! let mut cfg: AwfulJadeConfig = load_config("/path/to/config.yaml")?;
+//! cfg.ensure_conversation_and_config("my-session-name").await?;
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
-
 use crate::models::*;
 use diesel::prelude::*;
 
@@ -23,54 +48,69 @@ use std::{error::Error, fs};
 
 use tracing::*;
 
-/// Represents the application's configuration.
+/// In-memory application settings loaded from `config.yaml`.
 ///
-/// This struct holds the configuration parameters needed to run the application,
-/// such as API key, API base URL, and model name. It can be constructed by loading
-/// a YAML configuration file using the `load_config` function.
+/// These values control **how** Awful Jade talks to your OpenAI-compatible
+/// backend (base URL, key, model), how large the assistant’s context can be
+/// (`context_max_tokens`), where the message history DB lives (`session_db_url`),
+/// whether to **stream** responses, and (optionally) which **named session**
+/// is active.
+///
+/// The struct is [`Serialize`]/[`Deserialize`] and meant to be read from YAML via
+/// [`load_config`].
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 pub struct AwfulJadeConfig {
-    /// The API key used to authenticate requests to the API.
+    /// API key used by the OpenAI client. Leave empty for unsecured local backends.
     pub api_key: String,
 
-    /// The base URL of the API.
+    /// Base URL of the OpenAI-compatible API, e.g. `http://localhost:5001/v1`.
     pub api_base: String,
 
-    /// The name of the model to be used for generating responses.
+    /// The model identifier to request (e.g., `qwen2`, `mistral-7b`, etc.).
     pub model: String,
 
-    // The context size of the model.
+    /// Maximum tokens for a single model response. Used to cap completions.
     pub context_max_tokens: u16,
 
-    // Minimum context size for the assistant.
+    /// A minimum context that should remain available for the assistant
+    /// (used by higher-level logic to budget prompt vs. reply).
     pub assistant_minimum_context_tokens: i32,
 
-    // Stop words
+    /// Stop strings to terminate generation early.
     pub stop_words: Vec<String>,
 
-    // Session database url (SQLite)
+    /// SQLite database URL (file path) where conversations/messages are stored.
     pub session_db_url: String,
 
-    // Session name
+    /// Optional name of the active conversation/session.
     pub session_name: Option<String>,
 
-    // Whether or not to stream the output of an ask command to stdout
-    pub should_stream: Option<bool>
+    /// If `Some(true)`, stream assistant tokens to stdout in `ask`.
+    /// If `Some(false)` or `None`, perform non-streaming requests.
+    pub should_stream: Option<bool>,
 }
 
 impl AwfulJadeConfig {
-    /// Ensure Conversation and Config
+    /// Ensure a conversation and a persisted config snapshot exist for `a_session_name`.
     ///
-    /// This function checks for an existing conversation with the specified session name.
-    /// If none exists, it creates a new conversation and checks for a differing AwfulConfig,
-    /// creating a new config entry if necessary.
+    /// This function performs a single transaction that:
+    /// 1. Looks up an existing `conversations.session_name == a_session_name`.
+    ///    If none is found, it **inserts** a new conversation row.
+    /// 2. Checks for an `awful_configs` row linked to that conversation.
+    ///    If none exists **or** the stored settings differ from `self`
+    ///    (see the custom `PartialEq` impl with `AwfulConfig`), it **inserts**
+    ///    a new config snapshot row.
+    /// 3. Sets `self.session_name = Some(a_session_name.into())`.
+    ///
+    /// This is typically called once after reading the YAML config if you
+    /// are running a named session (interactive mode or `ask --session ...`).
     ///
     /// # Parameters
-    /// - `session_name: &str`: The name of the conversation session
-    /// - `jade_config: config::AwfulJadeConfig`: The configuration for Awful Jade
+    /// - `a_session_name`: The friendly name to identify this conversation.
     ///
-    /// # Returns
-    /// - `Result<(), Box<dyn Error>>`: Result type indicating success or error
+    /// # Errors
+    /// Propagates Diesel errors if the transaction fails and bubbles up any other
+    /// DB or I/O issues as a boxed error.
     pub async fn ensure_conversation_and_config(
         &mut self,
         a_session_name: &str,
@@ -94,7 +134,7 @@ impl AwfulJadeConfig {
                 let new_conversation = Conversation {
                     id: None,
                     session_name: a_session_name.to_string(),
-                }; // Assume NewConversation is a struct for creating new conversations
+                };
                 diesel::insert_into(crate::schema::conversations::table)
                     .values(&new_conversation)
                     .returning(Conversation::as_returning())
@@ -115,7 +155,6 @@ impl AwfulJadeConfig {
             // If config doesn't exist or differs, create a new one
             if existing_config.is_none() || existing_config.unwrap() != *self {
                 let new_config = AwfulConfig {
-                    // Assume AwfulConfig is a struct for creating new configs
                     id: None,
                     conversation_id: Some(conversation.id().expect("Conversation has no ID!")),
                     api_key: self.api_key.clone(),
@@ -137,30 +176,24 @@ impl AwfulJadeConfig {
     }
 }
 
-/// Loads the application's configuration from a YAML file.
+/// Load configuration from a YAML file on disk.
 ///
-/// This function reads the file at the given path, parses it as YAML, and
-/// constructs an `AwfulJadeConfig` struct from it.
+/// This is a thin convenience wrapper over `fs::read_to_string` + `serde_yaml::from_str`.
 ///
 /// # Parameters
-///
-/// - `file`: The path to the YAML configuration file.
+/// - `file`: Path to a YAML config file.
 ///
 /// # Returns
-///
-/// - `Ok(AwfulJadeConfig)`: The loaded configuration.
-/// - `Err(Box<dyn Error>)`: An error occurred while reading the file or parsing the YAML.
+/// - `Ok(AwfulJadeConfig)` on success.
+/// - `Err(..)` if the file can’t be read or cannot be parsed as valid YAML.
 ///
 /// # Examples
-///
 /// ```no_run
 /// use awful_aj::config::load_config;
 ///
-/// let config_file_path = "/path/to/config.yaml";
-/// match load_config(config_file_path) {
-///     Ok(config) => println!("{:?}", config),
-///     Err(err) => eprintln!("Error loading config: {}", err),
-/// }
+/// let cfg = load_config("/path/to/config.yaml")?;
+/// assert!(!cfg.api_base.is_empty());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn load_config(file: &str) -> Result<AwfulJadeConfig, Box<dyn Error>> {
     let content = fs::read_to_string(file)?;
@@ -168,10 +201,21 @@ pub fn load_config(file: &str) -> Result<AwfulJadeConfig, Box<dyn Error>> {
     Ok(config)
 }
 
+/// Establish a Diesel `SqliteConnection` to the session database.
+///
+/// Panics with a clear message if the connection cannot be opened.
+/// Prefer this for small CLI tools where early-exit is acceptable; for
+/// long-running services you might want to return a `Result` instead.
 pub fn establish_connection(db_url: &str) -> SqliteConnection {
     SqliteConnection::establish(db_url).unwrap_or_else(|_| panic!("Error connecting to {}", db_url))
 }
 
+/// Compare a persisted DB snapshot (`AwfulConfig`) with an in-memory [`AwfulJadeConfig`].
+///
+/// This drives the “should we insert a new `awful_configs` row?” decision in
+/// [`AwfulJadeConfig::ensure_conversation_and_config`]. It compares API base,
+/// key, model, `context_max_tokens` (with integer cast), and
+/// `assistant_minimum_context_tokens`. If any differ, a new snapshot is inserted.
 impl PartialEq<AwfulJadeConfig> for AwfulConfig {
     fn eq(&self, other: &AwfulJadeConfig) -> bool {
         self.api_base == other.api_base
@@ -190,6 +234,7 @@ mod tests {
     use std::io::Write;
     use tempfile::NamedTempFile;
 
+    /// Verifies that a well-formed YAML file loads into `AwfulJadeConfig`.
     #[test]
     fn test_load_config_valid_file() {
         // Create a temporary file with a valid configuration.
@@ -223,25 +268,20 @@ stop_words: ["<|im_end|>", "\n"]
         assert_eq!(config.assistant_minimum_context_tokens, 2048);
     }
 
+    /// Non-existent file should surface an error.
     #[test]
     fn test_load_config_invalid_file() {
-        // Try to load a configuration from a non-existent file path.
         let config = load_config("non/existent/path");
-
-        // Assert that an error occurred.
         assert!(config.is_err());
     }
 
+    /// Malformed YAML should fail to parse.
     #[test]
     fn test_load_config_invalid_format() {
-        // Create a temporary file with an invalid configuration format.
         let mut temp_file = NamedTempFile::new().unwrap();
         writeln!(temp_file, r#"invalid: config: format"#).unwrap();
 
-        // Try to load the configuration from the temporary file.
         let config = load_config(temp_file.path().to_str().unwrap());
-
-        // Assert that an error occurred due to the invalid format.
         assert!(config.is_err());
     }
 }

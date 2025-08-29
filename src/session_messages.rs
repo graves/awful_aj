@@ -1,15 +1,29 @@
-//! # Session Messages Modul
+//! # Session Messages Module
 //!
-//! This module manages the lifecycle of chat session messages, including
-//! persistence to a SQLite database, token counting, message serialization,
-//! and managing session memory limits.
+//! Manages the lifecycle of chat session messages, including:
 //!
-//! It provides functionality for:
-//! - Serializing and deserializing chat messages
-//! - Inserting and querying conversations and messages
-//! - Counting tokens to determine when old messages should be ejected
-//! - Interfacing with both `async-openai` and database models
+//! - Persistence to a SQLite database (via Diesel)
+//! - Token counting (tiktoken) to enforce context budgets
+//! - Serialization to/from `async-openai` chat message types
+//! - Ejection decisions when context is too large
 //!
+//! ## What this module owns
+//! - A `SessionMessages` struct that holds **preamble** messages (system/brain/template) and
+//!   **conversation** messages (user/assistant), plus DB connectivity and config.
+//! - Helpers to insert/query conversations and messages.
+//! - Utilities to convert to/from OpenAI chat types, and to count tokens.
+//!
+//! ## Typical flow (high level)
+//! 1. Create `SessionMessages::new(config)`.
+//! 2. Load preamble and prior conversation from DB, or build a fresh preamble.
+//! 3. Push new user message; decide whether to stream or fetch a completion.
+//! 4. Persist assistant reply; update token counts and possibly eject old turns.
+//!
+//! ## Diesel schema
+//! This module expects the standard Awful Jade Diesel schema with `conversations` and `messages`
+//! tables (see `crate::schema`). A valid `session_name` must be present in
+//! `AwfulJadeConfig` to associate records.
+
 use async_openai::types::ChatCompletionRequestAssistantMessage;
 use async_openai::types::ChatCompletionRequestAssistantMessageContent;
 use async_openai::types::ChatCompletionRequestSystemMessageContent;
@@ -26,10 +40,13 @@ use crate::{
 use diesel::prelude::*;
 use tiktoken_rs::cl100k_base;
 
-/// Represents the session's messages, including both the system preamble
-/// and the ongoing conversation.
+/// Container for all messages in the current session plus DB connectivity.
 ///
-/// Also holds a live database connection for persisting messages.
+/// Holds:
+/// - `preamble_messages`: System/brain/template messages that always lead the prompt.
+/// - `conversation_messages`: The rolling user/assistant exchange for this turn.
+/// - `config`: Copy of `AwfulJadeConfig` for token budgets and DB URL.
+/// - `sqlite_connection`: Live connection used for persistence.
 pub struct SessionMessages {
     /// Messages that form the system preamble, including instructions and initial memory.
     pub preamble_messages: Vec<ChatCompletionRequestMessage>,
@@ -45,13 +62,37 @@ pub struct SessionMessages {
 }
 
 impl SessionMessages {
-    /// Creates a new `SessionMessages` instance tied to a configuration.
+    /// Create a new `SessionMessages` from an application config.
+    ///
+    /// Establishes a SQLite connection immediately using `config.session_db_url`.
     ///
     /// # Parameters
-    /// - `config: AwfulJadeConfig`: Configuration for the session.
+    /// - `config`: Application configuration (cloned internally).
     ///
     /// # Returns
-    /// - `Self`: New `SessionMessages` instance.
+    /// A new `SessionMessages` with empty message buffers.
+    ///
+    /// # Panics
+    /// Panics if the SQLite connection cannot be established.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// use awful_aj::config::AwfulJadeConfig;
+    /// use awful_aj::session_messages::SessionMessages;
+    ///
+    /// let cfg = AwfulJadeConfig {
+    ///     api_key: String::new(),
+    ///     api_base: String::new(),
+    ///     model: "demo".into(),
+    ///     context_max_tokens: 8192,
+    ///     assistant_minimum_context_tokens: 2048,
+    ///     stop_words: vec![],
+    ///     session_db_url: "aj.db".into(),
+    ///     session_name: Some("my-session".into()),
+    ///     should_stream: None,
+    /// };
+    /// let sess = SessionMessages::new(cfg);
+    /// ```
     pub fn new(config: AwfulJadeConfig) -> Self {
         Self {
             preamble_messages: Vec::new(),
@@ -61,16 +102,19 @@ impl SessionMessages {
         }
     }
 
-    /// Serializes a chat message into a `Message` database model.
+    /// Serialize a chat message into the database `Message` model.
+    ///
+    /// This does **not** write to the database; it only builds the struct
+    /// (use [`persist_message`] to insert it).
     ///
     /// # Parameters
-    /// - `role: String`: Role of the message (e.g., "user", "assistant").
-    /// - `content: String`: Message content.
-    /// - `dynamic: bool`: Whether the message is dynamic.
-    /// - `conversation: &Conversation`: Conversation to associate with.
+    /// - `role`: String role (`"system"`, `"user"`, `"assistant"`).
+    /// - `content`: Text content.
+    /// - `dynamic`: Whether the message was generated dynamically.
+    /// - `conversation`: The conversation the message belongs to.
     ///
     /// # Returns
-    /// - `Message`: Serialized message struct.
+    /// A `Message` ready for insertion.
     pub fn serialize_chat_message(
         role: String,
         content: String,
@@ -86,14 +130,20 @@ impl SessionMessages {
         }
     }
 
-    /// Converts a `Role` and content into an OpenAI `ChatCompletionRequestMessage`.
+    /// Convert a `Role` plus `content` into an OpenAI chat message.
+    ///
+    /// Supported roles: `System`, `User`, `Assistant`. Other roles produce `None`,
+    /// and this function **unwraps** the result, so it will **panic** on unsupported roles.
     ///
     /// # Parameters
-    /// - `role: Role`: Sender's role.
-    /// - `content: String`: Content of the message.
+    /// - `role`: Sender role.
+    /// - `content`: Message content.
     ///
     /// # Returns
-    /// - `ChatCompletionRequestMessage`: New chat message.
+    /// A `ChatCompletionRequestMessage` corresponding to the role/content.
+    ///
+    /// # Panics
+    /// Panics if `role` is not one of `System | User | Assistant`.
     #[allow(deprecated)]
     pub fn serialize_chat_completion_message(
         role: Role,
@@ -130,13 +180,15 @@ impl SessionMessages {
         message.unwrap()
     }
 
-    /// Persists a `Message` into the database.
+    /// Insert a single `Message` row into the database.
+    ///
+    /// Runs in a transaction and returns the inserted record (with ID).
     ///
     /// # Parameters
-    /// - `message: &Message`: Message to persist.
+    /// - `message`: The message to persist (usually built via [`serialize_chat_message`]).
     ///
     /// # Returns
-    /// - `Result<Message, diesel::result::Error>`: Inserted message or error.
+    /// `Ok(Message)` with the returned row, or `Err(diesel::result::Error)` on failure.
     pub fn persist_message(&mut self, message: &Message) -> Result<Message, diesel::result::Error> {
         let message: Message = self.sqlite_connection.transaction(|conn| {
             diesel::insert_into(crate::schema::messages::table)
@@ -148,13 +200,19 @@ impl SessionMessages {
         Ok(message)
     }
 
-    /// Persists multiple `ChatCompletionRequestMessage` entries into the database.
+    /// Persist a batch of `ChatCompletionRequestMessage`s to the database.
+    ///
+    /// The current conversation is determined via [`query_conversation`]. Each chat message
+    /// is converted to a DB `Message` and inserted within its own transaction.
     ///
     /// # Parameters
-    /// - `messages: &Vec<ChatCompletionRequestMessage>`: Messages to persist.
+    /// - `messages`: The chat messages to persist.
     ///
     /// # Returns
-    /// - `Result<Vec<Message>, diesel::result::Error>`: Inserted messages or error.
+    /// Vector of inserted `Message` rows, or an error if any insert fails.
+    ///
+    /// # Panics
+    /// Panics if there is no active conversation (because `query_conversation()` is unwrapped).
     pub fn persist_chat_completion_messages(
         &mut self,
         messages: &Vec<ChatCompletionRequestMessage>,
@@ -209,14 +267,14 @@ impl SessionMessages {
         Ok(persisted_messages)
     }
 
-    /// Inserts a new chat message into the database for the current conversation.
+    /// Insert a single message into the current conversation.
     ///
     /// # Parameters
-    /// - `role: String`: Sender's role.
-    /// - `content: String`: Content of the message.
+    /// - `role`: Role as a string (`"system"`, `"user"`, `"assistant"`).
+    /// - `content`: Message text.
     ///
     /// # Returns
-    /// - `Result<Message, diesel::result::Error>`: Inserted message or error.
+    /// The inserted `Message` row, or an error if the conversation could not be found or insert fails.
     pub fn insert_message(
         &mut self,
         role: String,
@@ -234,10 +292,11 @@ impl SessionMessages {
         }
     }
 
-    /// Queries the database for the current session's conversation.
+    /// Look up the active conversation based on `config.session_name`.
     ///
     /// # Returns
-    /// - `Result<Conversation, diesel::result::Error>`: Conversation or error.
+    /// - `Ok(Conversation)` if found.
+    /// - `Err(NotFound)` if `session_name` is `None` or the row does not exist.
     pub fn query_conversation(&mut self) -> Result<Conversation, diesel::result::Error> {
         let a_session_name = self.config.session_name.as_ref();
 
@@ -260,13 +319,13 @@ impl SessionMessages {
         conversation
     }
 
-    /// Queries the database for messages in a given conversation.
+    /// Fetch all messages that belong to a conversation.
     ///
     /// # Parameters
-    /// - `conversation: &Conversation`: Conversation to query.
+    /// - `conversation`: Conversation to query by ID.
     ///
     /// # Returns
-    /// - `Result<Vec<Message>, diesel::result::Error>`: List of messages or error.
+    /// Vector of `Message` in that conversation, ordered by default Diesel behavior.
     pub fn query_conversation_messages(
         &mut self,
         conversation: &Conversation,
@@ -284,16 +343,18 @@ impl SessionMessages {
         messages
     }
 
-    /// Converts a `String` into an OpenAI `Role`.
+    /// Convert a string role to an OpenAI `Role`.
+    ///
+    /// Accepted: `"system"`, `"user"`, `"assistant"`.
     ///
     /// # Panics
-    /// Panics if an unknown role string is encountered.
+    /// Panics on any unrecognized role string.
     ///
     /// # Parameters
-    /// - `role: &String`: Role as a string.
+    /// - `role`: Role as a `&str`.
     ///
     /// # Returns
-    /// - `Role`: Parsed role.
+    /// A `Role` enum variant.
     pub fn string_to_role(role: &str) -> Role {
         match role {
             "system" => Role::System,
@@ -303,13 +364,13 @@ impl SessionMessages {
         }
     }
 
-    /// Counts the number of tokens in a `Message`.
+    /// Count tokens in a single `Message` (using `cl100k_base` tokenizer).
     ///
     /// # Parameters
-    /// - `message: &Message`: Message to tokenize.
+    /// - `message`: The DB message whose `content` is tokenized.
     ///
     /// # Returns
-    /// - `isize`: Number of tokens.
+    /// Number of tokens as `isize`.
     pub fn count_tokens_in_message(message: &Message) -> isize {
         let bpe = cl100k_base().unwrap();
         let msg_tokens = bpe.encode_with_special_tokens(&message.content);
@@ -317,13 +378,15 @@ impl SessionMessages {
         msg_tokens.len() as isize
     }
 
-    /// Counts the number of tokens across multiple `ChatCompletionRequestMessage` entries.
+    /// Count tokens in a set of `ChatCompletionRequestMessage`s.
+    ///
+    /// Only counts the textual content of `System`, `User`, and textual `Assistant` messages.
     ///
     /// # Parameters
-    /// - `messages: &Vec<ChatCompletionRequestMessage>`: Messages to tokenize.
+    /// - `messages`: The in-memory OpenAI messages to sum.
     ///
     /// # Returns
-    /// - `isize`: Total number of tokens.
+    /// Sum of tokens across all messages as `isize`.
     pub fn count_tokens_in_chat_completion_messages(
         messages: &Vec<ChatCompletionRequestMessage>,
     ) -> isize {
@@ -371,13 +434,17 @@ impl SessionMessages {
         count
     }
 
-    /// Calculates how many tokens are available before messages must be ejected.
+    /// Compute remaining token budget **before** older messages must be ejected.
+    ///
+    /// This uses:
+    /// - Token count of the current in-memory `preamble_messages`, and
+    /// - Token count of the provided `messages` (often the DB-backed history you plan to include).
     ///
     /// # Parameters
-    /// - `messages: Vec<Message>`: Messages in the conversation.
+    /// - `messages`: Messages to consider for inclusion.
     ///
     /// # Returns
-    /// - `isize`: Remaining token allowance.
+    /// Remaining tokens (`max_tokens - used_tokens`) as `isize` (may be negative).
     pub fn tokens_left_before_ejection(&self, messages: Vec<Message>) -> isize {
         let bpe = cl100k_base().unwrap();
         let max_tokens =
@@ -397,19 +464,24 @@ impl SessionMessages {
         max_tokens as isize - tokens_in_session
     }
 
-    /// Returns the maximum allowed token budget for a session.
+    /// Maximum token budget available to the assistant for the whole session.
+    ///
+    /// Computed as `context_max_tokens - assistant_minimum_context_tokens`.
     ///
     /// # Returns
-    /// - `isize`: Maximum number of tokens allowed before assistant cut-off.
+    /// The token budget as `isize`.
     pub fn max_tokens(&self) -> isize {
         ((self.config.context_max_tokens as i32) - self.config.assistant_minimum_context_tokens)
             as isize
     }
 
-    /// Determines if messages should be ejected based on current token usage.
+    /// Should we eject old messages right now?
+    ///
+    /// Compares the tokens in **current** `preamble_messages + conversation_messages`
+    /// against the session budget.
     ///
     /// # Returns
-    /// - `bool`: `true` if messages need to be ejected, otherwise `false`.
+    /// `true` if total tokens exceed the session budget; otherwise `false`.
     pub fn should_eject_message(&self) -> bool {
         let session_token_count =
             Self::count_tokens_in_chat_completion_messages(&self.preamble_messages)

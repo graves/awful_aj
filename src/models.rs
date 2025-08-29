@@ -1,106 +1,162 @@
-//! # Models Module
+//! # Database models
 //!
-//! This module defines the database models for the application.
+//! Data structures that map to the project’s SQLite schema via **Diesel**.
 //!
-//! These models are tightly integrated with Diesel ORM to support operations
-//! like querying, inserting, updating, and associating records in an SQLite database.
+//! These models are used by higher-level modules to persist and query:
 //!
-//! # Overview
+//! - [`AwfulConfig`]: point-in-time snapshots of runtime settings tied to a
+//!   specific conversation.
+//! - [`Conversation`]: a named chat thread (session).
+//! - [`Message`]: one record per turn (system/user/assistant) within a conversation.
 //!
-//! - `AwfulConfig` stores API and session configuration settings.
-//! - `Conversation` represents a named conversation session.
-//! - `Message` records individual messages exchanged during conversations.
+//! ## Diesel expectations
 //!
-//! All models derive traits like `Queryable`, `Insertable`, `Associations`, and `Selectable`
-//! to allow efficient database interaction. They also implement `Clone` and `Debug` where appropriate.
-
+//! This module assumes the following tables exist (see `crate::schema` generated
+//! by `diesel print-schema`):
+//!
+//! - `awful_configs`
+//! - `conversations`
+//! - `messages`
+//!
+//! Each struct derives the appropriate Diesel traits (`Queryable`, `Insertable`,
+//! `Associations`, `Identifiable`, `Selectable`) and is annotated with
+//! `#[diesel(table_name = ...)]` and `#[diesel(belongs_to(...))]` where needed.
+//!
+//! ## Basic usage
+//!
+//! ```no_run
+//! use diesel::prelude::*;
+//! use awful_aj::config::establish_connection;
+//! use awful_aj::models::{Conversation, Message};
+//!
+//! let mut conn = establish_connection("aj.db");
+//!
+//! // Insert a conversation
+//! let convo = diesel::insert_into(crate::schema::conversations::table)
+//!     .values(&Conversation { id: None, session_name: "demo".into() })
+//!     .returning(Conversation::as_returning())
+//!     .get_result(&mut conn)?;
+//!
+//! // Insert a message inside that conversation
+//! let _msg = diesel::insert_into(crate::schema::messages::table)
+//!     .values(&Message {
+//!         id: None,
+//!         role: "user".into(),
+//!         content: "Hello there".into(),
+//!         dynamic: true,
+//!         conversation_id: convo.id,
+//!     })
+//!     .returning(Message::as_returning())
+//!     .get_result(&mut conn)?;
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
 use diesel::prelude::*;
 
-/// Represents the stored configuration settings for a session.
+/// Snapshot of runtime settings linked to a [`Conversation`].
 ///
-/// Each `AwfulConfig` belongs to a specific `Conversation`, allowing
-/// session-specific configuration overrides.
+/// An `AwfulConfig` row captures the **API** and **token budgeting** knobs that
+/// were in effect for a given session at a given time. The app may insert a new
+/// snapshot whenever those values change (see
+/// [`crate::config::AwfulJadeConfig::ensure_conversation_and_config`]).
 ///
-/// # Database
-/// - Table: `awful_configs`
+/// ### Table
+/// - `awful_configs`
 ///
-/// # Diesel Derivations
-/// - `Queryable`, `Insertable`, `Associations`
+/// ### Associations
+/// - `belongs_to(Conversation)`
 ///
-/// # Fields
-/// - `id`: Unique identifier (optional, auto-incremented).
-/// - `api_base`: Base URL of the API.
-/// - `api_key`: Authentication key for API access.
-/// - `model`: Model name to be used for generation.
-/// - `context_max_tokens`: Maximum allowed tokens for context.
-/// - `assistant_minimum_context_tokens`: Reserved tokens for assistant's response.
-/// - `stop_words`: Serialized string of stop words used in completions.
-/// - `conversation_id`: Foreign key reference to the associated `Conversation`.
+/// ### Notes
+/// - `stop_words` is stored as a single **comma-joined** string in the DB; the
+///   higher-level config loads a `Vec<String>` from YAML and handles the join/split.
+/// - `id` is optional for `Insertable` convenience; Diesel assigns it on insert.
 #[derive(Queryable, Associations, Insertable, PartialEq, Debug)]
 #[diesel(belongs_to(Conversation))]
 #[diesel(table_name = crate::schema::awful_configs)]
 #[diesel(check_for_backend(diesel::sqlite::Sqlite))]
 pub struct AwfulConfig {
+    /// Auto-increment primary key (set by the DB on insert).
     #[diesel(deserialize_as = i32)]
     pub id: Option<i32>,
+    /// Base URL of the OpenAI-compatible endpoint (e.g. `http://localhost:5001/v1`).
     pub api_base: String,
+    /// API key/token; may be empty when talking to a local, unsecured backend.
     pub api_key: String,
+    /// Model identifier to request from the backend.
     pub model: String,
+    /// Maximum tokens for the assistant’s response (DB as `i32`).
     pub context_max_tokens: i32,
+    /// Minimum tokens to keep budgeted for the assistant (DB as `i32`).
     pub assistant_minimum_context_tokens: i32,
+    /// Comma-joined list of stop strings.
     pub stop_words: String,
+    /// Foreign key to the owning [`Conversation`].
     pub conversation_id: Option<i32>,
 }
 
-/// Represents a named conversation between the user and assistant.
+/// A named chat session.
 ///
-/// Conversations organize messages under distinct session names, enabling
-/// saving and resuming multi-turn chats.
+/// Conversations group messages and configuration snapshots under a human-readable
+/// `session_name` (e.g., `default`, `research-notes`, `demo-2025-08-29`).
 ///
-/// # Database
-/// - Table: `conversations`
+/// ### Table
+/// - `conversations`
 ///
-/// # Diesel Derivations
-/// - `Queryable`, `Identifiable`, `Insertable`, `Selectable`
-///
-/// # Fields
-/// - `id`: Unique identifier (optional, auto-incremented).
-/// - `session_name`: Unique name assigned to the conversation.
+/// ### Derives
+/// - `Identifiable` so you can `load`/`find` by primary key
+/// - `Selectable` for returning typed rows in queries
 #[derive(Queryable, Identifiable, Insertable, Debug, Selectable)]
 #[diesel(table_name = crate::schema::conversations)]
 #[diesel(check_for_backend(diesel::sqlite::Sqlite))]
 pub struct Conversation {
+    /// Auto-increment primary key (set by the DB on insert).
     #[diesel(deserialize_as = i32)]
     pub id: Option<i32>,
+    /// Unique session name for this conversation.
     pub session_name: String,
 }
 
-/// Represents a single message exchanged in a conversation.
+impl Conversation {
+    /// Convenience accessor for the assigned primary key.
+    ///
+    /// Returns `Some(id)` once the row has been inserted.
+    #[inline]
+    pub fn id(&self) -> Option<i32> {
+        self.id
+    }
+}
+
+/// One turn in a conversation.
 ///
-/// Messages are associated with a conversation and track both user
-/// and assistant messages, including system prompts and dynamic generation.
+/// A `Message` represents either a system, user, or assistant utterance. It is
+/// associated with exactly one [`Conversation`].
 ///
-/// # Database
-/// - Table: `messages`
+/// ### Table
+/// - `messages`
 ///
-/// # Diesel Derivations
-/// - `Queryable`, `Associations`, `Insertable`, `Selectable`, `Clone`
+/// ### Role values
+/// - `"system"`: system instructions or preamble
+/// - `"user"`: user input
+/// - `"assistant"`: model output
 ///
-/// # Fields
-/// - `id`: Unique identifier (optional, auto-incremented).
-/// - `role`: Sender's role (`system`, `user`, `assistant`).
-/// - `content`: Text content of the message.
-/// - `dynamic`: Indicates if the message was dynamically generated.
-/// - `conversation_id`: Foreign key reference to the associated `Conversation`.
-#[derive(Queryable, Associations, Insertable, Debug, Selectable,  Clone)]
+/// ### Notes
+/// - `dynamic` can be used to mark messages generated at runtime versus
+///   static template rows.
+/// - For convenience, this struct derives `Clone` to allow re-queuing
+///   and buffering in memory before persistence.
+#[derive(Queryable, Associations, Insertable, Debug, Selectable, Clone)]
 #[diesel(belongs_to(Conversation))]
 #[diesel(table_name = crate::schema::messages)]
 #[diesel(check_for_backend(diesel::sqlite::Sqlite))]
 pub struct Message {
+    /// Auto-increment primary key (set by the DB on insert).
     #[diesel(deserialize_as = i32)]
     pub id: Option<i32>,
+    /// Sender role: `"system"`, `"user"`, or `"assistant"`.
     pub role: String,
+    /// Raw message text.
     pub content: String,
+    /// `true` if generated dynamically (e.g., fetched/streamed), `false` if static.
     pub dynamic: bool,
-    pub conversation_id: Option<i32>
+    /// Foreign key to the owning [`Conversation`].
+    pub conversation_id: Option<i32>,
 }

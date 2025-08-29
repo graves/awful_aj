@@ -1,87 +1,130 @@
-//! This module provides functionality for loading and handling chat templates.
+//! # Template loading and structure
 //!
-//! It defines the `ChatTemplate` struct, which holds the system prompt and messages,
-//! and a `load_template` async function to load a template from a file.
+//! Utilities for defining and loading **chat templates** used by Awful Jade.
 //!
-//! ## Examples
+//! A template is a small YAML document that specifies:
+//! - a `system_prompt` to steer the assistant’s behavior,
+//! - an ordered list of seed `messages` (serialized
+//!   [`async_openai::types::ChatCompletionRequestMessage`]),
+//! - an optional `response_format` JSON schema to enforce structured outputs,
+//! - optional `pre_user_message_content` / `post_user_message_content` strings that are
+//!   automatically prepended/appended to every *user* message at runtime.
 //!
-//! Loading a chat template from a file:
+//! Templates are stored per-user under the application’s configuration directory,
+//! inside a `templates/` subfolder. The loader resolves templates at:
+//!
+//! ```text
+//! <config_dir>/templates/<name>.yaml
+//! ```
+//!
+//! where `<config_dir>` is provided by [`crate::config_dir()`] and is platform-specific:
+//!
+//! - macOS: `~/Library/Application Support/com.awful-sec.aj/`  
+//! - Linux: `~/.config/aj/` (via XDG)  
+//! - Windows: `%APPDATA%\com.awful-sec\aj\`
+//!
+//! ## Minimal YAML example
+//!
+//! ```yaml
+//! # ~/.config/.../templates/simple_question.yaml
+//! system_prompt: "You are Awful Jade, a concise and helpful assistant."
+//! messages:
+//!   - role: "user"
+//!     content: "Say hello briefly."
+//! # Optional fields:
+//! # response_format:   # ResponseFormatJsonSchema (see async_openai types)
+//! #   type: "json_schema"
+//! #   json_schema: { ... }   # your JSON schema payload
+//! # pre_user_message_content: "Please keep it under 2 sentences."
+//! # post_user_message_content: "Answer in plain English."
+//! ```
+//!
+//! ## Loading a template
 //!
 //! ```no_run
 //! use awful_aj::template::{ChatTemplate, load_template};
 //!
-//! let template_name = "example";
-//! // We can't run async functions in docstrings
-//! // let template: ChatTemplate = load_template(template_name).await.unwrap();
-//! // println!("{:?}", template);
+//! # async fn run() -> Result<(), Box<dyn std::error::Error>> {
+//! let template: ChatTemplate = load_template("simple_question").await?;
+//! println!("System prompt: {}", template.system_prompt);
+//! # Ok(()) }
 //! ```
+//!
+//! ## Behavior notes
+//! - [`load_template`] *only* reads from the configuration directory; it does not look in the
+//!   current working directory.
+//! - The loader logs the resolved path with `tracing::info!` to help diagnose missing/invalid
+//!   files.
+//! - The `messages` field is deserialized directly into `ChatCompletionRequestMessage` values
+//!   (System/User/Assistant). Ensure your YAML matches the enum’s expected shape.
 
 use async_openai::types::{ChatCompletionRequestMessage, ResponseFormatJsonSchema};
 use serde::{Deserialize, Serialize};
 use std::{error::Error, fs};
-/// Represents a chat template.
+
+/// A reusable chat template.
 ///
-/// A `ChatTemplate` holds a system prompt and a sequence of messages. The system prompt guides the assistant's behavior,
-/// and the messages represent a conversation. The structure can be constructed from a YAML file using the `load_template` function.
+/// Instances are typically created by deserializing YAML files with
+/// [`load_template`]. The fields map directly to how a chat session is
+/// initialized and how user input is decorated.
 ///
-/// ## Fields
-/// - `system_prompt`: A `String` that defines the assistant's behavior.
-/// - `messages`: A `Vec<ChatCompletionRequestMessage>` that contains the messages constituting the conversation.
-/// -`json_schema`: A `ResponseFormatSchema` that contains a JSON schema that enforces a custom output.
+/// ### Fields
+/// - [`system_prompt`](Self::system_prompt): A high-level instruction that
+///   conditions the assistant.
+/// - [`messages`](Self::messages): An initial ordered set of chat messages
+///   (system/user/assistant) inserted before user input.
+/// - [`response_format`](Self::response_format): Optional JSON schema to request
+///   structured responses (see OpenAI’s *JSON schema* response format).
+/// - [`pre_user_message_content`](Self::pre_user_message_content): If set,
+///   concatenated **before** each user message string at runtime.
+/// - [`post_user_message_content`](Self::post_user_message_content): If set,
+///   concatenated **after** each user message string at runtime.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ChatTemplate {
-    /// The system prompt that guides the assistant's behavior.
+    /// Global instruction used as the session’s system message.
     pub system_prompt: String,
 
-    /// A list of messages that are part of the chat template.
+    /// Seed messages that precede live conversation turns.
     pub messages: Vec<ChatCompletionRequestMessage>,
 
-    /// A JSON schema that enforces a custom output
+    /// Optional response schema describing the desired JSON payload.
     pub response_format: Option<ResponseFormatJsonSchema>,
 
-    // A piece of text to prepend to each user message
+    /// Extra text automatically added **before** each user message at send time.
     pub pre_user_message_content: Option<String>,
 
-    // A piece of text to append to each user message
+    /// Extra text automatically added **after** each user message at send time.
     pub post_user_message_content: Option<String>,
 }
 
-/// Loads a chat template from a file.
+/// Load a chat template by name from the user’s config directory.
 ///
-/// Given the name of the template (excluding the file extension), this asynchronous function loads a chat template
-/// from a YAML file. The file is expected to be located in a directory specified by the `config_dir` function.
+/// Resolves `<config_dir>/templates/<name>.yaml`, reads the file, and
+/// deserializes into a [`ChatTemplate`].
 ///
-/// ## Parameters
-/// - `name`: A `&str` representing the name of the YAML file (excluding the .yaml extension) containing the chat template.
+/// ### Errors
+/// Returns an error if:
+/// - the config directory cannot be determined,
+/// - the template file does not exist or cannot be read,
+/// - the YAML content cannot be deserialized into a `ChatTemplate`.
 ///
-/// ## Returns
-/// - `Result<ChatTemplate, Box<dyn Error>>`: A `Result` that, if successful, contains the `ChatTemplate` loaded from the file.
-///   If an error occurs (e.g., due to file not found, permission issues, or parsing errors), it returns an error.
-///
-/// ## Examples
-///
+/// ### Examples
 /// ```no_run
 /// use awful_aj::template::load_template;
-/// use tokio;
 ///
-/// #[tokio::main]
-/// async fn main() {
-///     let template_name = "example";
-///     match load_template(template_name).await {
-///         Ok(template) => println!("{:?}", template),
-///         Err(err) => eprintln!("Error loading template: {}", err),
-///     }
-/// }
+/// # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+/// let tpl = load_template("simple_question").await?;
+/// assert!(tpl.system_prompt.contains("Awful Jade"));
+/// # Ok(()) }
 /// ```
 pub async fn load_template(name: &str) -> Result<ChatTemplate, Box<dyn Error>> {
     let path = format!("templates/{}.yaml", name);
-    let config_dir = crate::config_dir()?.join(&path);
+    let config_path = crate::config_dir()?.join(&path);
 
-    tracing::info!("Loading template: {}", config_dir.display());
+    tracing::info!("Loading template: {}", config_path.display());
 
-    let content = fs::read_to_string(config_dir)?;
+    let content = fs::read_to_string(config_path)?;
     let template: ChatTemplate = serde_yaml::from_str(&content)?;
-
     Ok(template)
 }
 
@@ -101,35 +144,30 @@ mod tests {
             fs::create_dir(&templates_dir).expect("Failed to create templates directory");
         }
 
-        // Create a temporary file within the templates directory
+        // Create a file within the templates directory
         let file_content = r#"
-    system_prompt: "You are a helpful assistant."
-    messages:
-      - role: "user"
-        content: "What is the weather like?"
-    "#;
+system_prompt: "You are a helpful assistant."
+messages:
+  - role: "user"
+    content: "What is the weather like?"
+"#;
 
         let file_name = "valid_template";
         let file_path = templates_dir.join(format!("{}.yaml", file_name));
-
-        fs::write(&file_path, file_content).expect("Unable to write to temporary file");
+        fs::write(&file_path, file_content).expect("Unable to write template");
 
         // Attempt to load the template
         let template = load_template(file_name).await;
 
-        // Clean up the temporary file
-        fs::remove_file(file_path).expect("Unable to delete temporary file");
-
+        // Clean up the file
+        fs::remove_file(file_path).expect("Unable to delete template");
         assert!(template.is_ok(), "Failed to load valid template");
     }
 
     #[tokio::test]
     async fn test_load_template_invalid_file() {
-        // Try to load a template from a non-existent file path.
         let template = load_template("non/existent/path").await;
-
-        // Assert that an error occurred.
-        assert!(template.is_err());
+        assert!(template.is_err(), "Expected error for missing template");
     }
 
     #[tokio::test]
@@ -138,10 +176,12 @@ mod tests {
         let mut temp_file = NamedTempFile::new().unwrap();
         writeln!(temp_file, r#"invalid: template: format"#).unwrap();
 
-        // Try to load the template from the temporary file.
+        // NOTE: This test intentionally bypasses the standard lookup path by
+        // passing the temp file path as the "name". That means the loader will
+        // try to resolve "<config_dir>/templates/<temp_path>.yaml", which
+        // should fail to deserialize. We assert an Err to keep behavior parity
+        // with the original test scaffold.
         let template = load_template(temp_file.path().to_str().unwrap()).await;
-
-        // Assert that an error occurred due to the invalid format.
-        assert!(template.is_err());
+        assert!(template.is_err(), "Expected YAML parse error");
     }
 }

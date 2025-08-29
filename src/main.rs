@@ -1,9 +1,63 @@
 //! # Awful Jade CLI Application
 //!
-//! This is the main module for the Awful Jade CLI application. It handles the initialization,
-//! configuration loading, and command execution based on user input from the command line.
+//! Command-line interface for **Awful Jade** (“aj”), a local-first assistant that can
+//! ask/answer questions, run interactive chats, and persist semantic memory via an
+//! HNSW-based vector store. This binary wires together configuration, prompt templates,
+//! session state, and the vector store brain, and provides three subcommands:
+//!
+//! - **`init`**: bootstrap default config and templates in the per-user config directory.
+//! - **`ask`**: send a single question using a chosen template (optionally with session memory).
+//! - **`interactive`**: open a REPL-like session that remembers context using embeddings.
+//!
+//! ## Model bootstrap
+//!
+//! On first run, the binary ensures the local sentence-embedding model
+//! `all-mini-lm-l12-v2` exists under the per-user config directory
+//! (see [`config_dir`]). If it is missing, the library’s
+//! `awful_aj::ensure_all_mini()` will **download and unzip** the model into the
+//! correct location. Subsequent runs reuse the on-disk model.
+//!
+//! ## Configuration & templates
+//!
+//! - Config lives at: `<config_dir>/config.yaml` (OS-specific; see [`config_dir`]).
+//! - Templates live under: `<config_dir>/templates/`.
+//!
+//! The `init` flow creates reasonable defaults for both.
+//!
+//! ## Sessions & memory
+//!
+//! If a configuration contains a `session_name`, Awful Jade:
+//!   1. Derives a stable SHA-256 digest from the session name,
+//!   2. Loads (or creates) a per-session vector store YAML file
+//!      `"<digest>_vector_store.yaml"` in the config directory, and
+//!   3. Uses that store to retrieve “memories” (HNSW nearest-neighbors from
+//!      `all-mini-lm-l12-v2` embeddings) that are eligible to be included
+//!      with the current prompt.
+//!
+//! The proportion of the LLM context window dedicated to memory is controlled by a
+//! fixed ratio (`max_brain_token_percentage = 0.25`), translated to a token budget
+//! via the `context_max_tokens` setting in config.
+//!
+//! ## Subcommands (high level)
+//!
+//! - **`aj init`**  
+//!   Creates `<config_dir>/config.yaml`, a default template (`default.yaml`),
+//!   and a ready-to-edit example template (`simple_question.yaml`).
+//!
+//! - **`aj ask [--template <name>] [--session <name>] "your question"`**  
+//!   Loads the chosen (or default) template, optionally binds to a named session,
+//!   injects relevant memory (if any), and prints the assistant’s reply.
+//!
+//! - **`aj interactive [--template <name>] [--session <name>]`**  
+//!   Starts an interactive loop that updates the session memory and renders replies
+//!   until you exit.
+//!
+//! ## Testing path override
+//!
+//! When `IN_TEST_ENVIRONMENT` is set in the environment, configuration is loaded
+//! from the current working directory (`./config.yaml`) instead of the per-user
+//! config path. See [`determine_config_path`].
 
-// Importing necessary modules and libraries
 extern crate diesel;
 
 use async_openai::types::{ChatCompletionRequestMessage, ChatCompletionRequestUserMessage};
@@ -19,13 +73,25 @@ use tracing::{debug, info};
 // A static OnceCell to hold the tracing subscriber, ensuring it is only initialized once.
 static TRACING: OnceCell<()> = OnceCell::new();
 
-/// Main Function
+/// Program entrypoint.
 ///
-/// Initializes tracing and the asynchronous runtime, then runs the application.
-/// Any errors encountered during the run are propagated and displayed before exiting.
+/// Initializes tracing, creates a Tokio runtime, and runs the async [`run`] function.
+/// Any error returned by [`run`] is surfaced here.
 ///
 /// # Returns
-/// - `Result<(), Box<dyn Error>>`: Result type indicating success or error
+/// A standard `Result<(), Box<dyn Error>>`.
+///
+/// # Panics
+/// Panics if a Tokio runtime cannot be created, or if blocking on the runtime fails.
+///
+/// # Examples
+/// ```no_run
+/// fn main() -> Result<(), Box<dyn std::error::Error>> {
+///     // Delegates to async runtime
+///     // (this function is provided by the binary and normally not called directly)
+///     Ok(())
+/// }
+/// ```
 fn main() -> Result<(), Box<dyn Error>> {
     initialize_tracing();
     let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -33,24 +99,38 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-/// Initialize Tracing
+/// Initialize global tracing.
 ///
-/// Sets up the tracing subscriber for the application. This is used for logging
-/// and is only initialized once, thanks to the `OnceCell` holding it.
+/// Sets up the default tracing subscriber once per process. Safe to call repeatedly.
+///
+/// # Notes
+/// Uses `tracing_subscriber::fmt::init()` with default formatting.
 fn initialize_tracing() {
     TRACING.get_or_init(|| {
         tracing_subscriber::fmt::init();
     });
 }
 
-/// Run Function
+/// Core async application logic.
 ///
-/// The core of the application, executed asynchronously. This function is responsible for
-/// parsing the command-line arguments, loading the configuration, and dispatching the
-/// commands to their appropriate handlers. Errors are propagated to the `main` function.
+/// - Parses CLI arguments via [`commands::Cli`] and dispatches to the selected subcommand.
+/// - Ensures the sentence-embedding model is present by calling
+///   `awful_aj::ensure_all_mini()` (downloads and unzips on first use).
+/// - Loads configuration and templates from the per-user config directory unless
+///   `IN_TEST_ENVIRONMENT` is set (see [`determine_config_path`]).
+/// - For `ask`/`interactive`, loads or creates a per-session [`VectorStore`] (if a
+///   session is active) and routes to the corresponding handler.
 ///
-/// # Returns
-/// - `Result<(), Box<dyn Error>>`: Result type indicating success or error
+/// # Errors
+/// Returns any I/O, (de)serialization, or API errors encountered during the run.
+///
+/// # Examples
+/// ```no_run
+/// # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+/// // Normally called from main() via a Tokio runtime
+/// // run().await?;
+/// # Ok(()) }
+/// ```
 async fn run() -> Result<(), Box<dyn Error>> {
     let cli = commands::Cli::parse();
 
@@ -110,18 +190,34 @@ async fn run() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-/// Handle Ask Command
+/// Handle the `ask` subcommand.
 ///
-/// Processes the 'ask' command. Loads a template and the user's question (or a default one)
-/// and forwards them to the API for processing. The result is then handled as per the application's
-/// design.
+/// Loads the selected (or default) chat template and (optionally) a question.
+/// If a session is active in config, the function loads or initializes a per-session
+/// [`VectorStore`] and builds a [`Brain`] with a token budget of 25% of
+/// `context_max_tokens`. It then calls [`api::ask`], optionally passing both
+/// the vector store and brain so the API layer can inject retrieved memories.
+///
+/// On success, the vector store is serialized back to disk for future queries.
 ///
 /// # Parameters
-/// - `jade_config: config::AwfulJadeConfig`: The configuration for Awful Jade
-/// - `question: Option<String>`: The question to be asked, or None to use a default question
+/// - `jade_config`: Loaded [`config::AwfulJadeConfig`].
+/// - `question`: Optional question text. If `None`, defaults to
+///   `"What is the meaning of life?"`.
+/// - `template_name`: Optional template name. If `None`, defaults to `"simple_question"`.
 ///
-/// # Returns
-/// - `Result<(), Box<dyn Error>>`: Result type indicating success or error
+/// # Errors
+/// - Returns I/O errors when loading/saving files,
+/// - YAML/JSON errors for (de)serialization,
+/// - and API/template loading errors bubbled up from the `awful_aj` crate.
+///
+/// # Examples
+/// ```no_run
+/// # async fn example(cfg: awful_aj::config::AwfulJadeConfig)
+/// # -> Result<(), Box<dyn std::error::Error>> {
+/// // handle_ask_command(cfg, Some("Hi!".into()), Some("default".into())).await?;
+/// # Ok(()) }
+/// ```
 async fn handle_ask_command(
     jade_config: config::AwfulJadeConfig,
     question: Option<String>,
@@ -169,18 +265,26 @@ async fn handle_ask_command(
     Ok(())
 }
 
-/// Handle Interactive Command
+/// Handle the `interactive` subcommand.
 ///
-/// Manages the 'interactive' command. Sets up and enters the interactive mode, allowing the
-/// user to engage in a conversation with the AI model. The conversation can be named, and the
-/// vectors are stored for retrieval.
+/// Opens an interactive loop backed by a per-session [`VectorStore`] and a
+/// [`Brain`] instantiated with a 25% token budget against `context_max_tokens`.
+/// The function delegates the loop mechanics to [`api::interactive_mode`].
 ///
 /// # Parameters
-/// - `jade_config: config::AwfulJadeConfig`: The configuration for Awful Jade
-/// - `name: Option<String>`: The name of the conversation, or None to use a default name
+/// - `jade_config`: Loaded [`config::AwfulJadeConfig`].
+/// - `template_name`: Optional template name. If `None`, defaults to `"simple_question"`.
 ///
-/// # Returns
-/// - `Result<(), Box<dyn Error>>`: Result type indicating success or error
+/// # Errors
+/// Propagates template loading, I/O, (de)serialization, and API errors.
+///
+/// # Examples
+/// ```no_run
+/// # async fn example(cfg: awful_aj::config::AwfulJadeConfig)
+/// # -> Result<(), Box<dyn std::error::Error>> {
+/// // handle_interactive_command(cfg, Some("default".into())).await?;
+/// # Ok(()) }
+/// ```
 async fn handle_interactive_command(
     jade_config: config::AwfulJadeConfig,
     template_name: Option<String>,
@@ -188,6 +292,7 @@ async fn handle_interactive_command(
     let template_name = template_name.unwrap_or_else(|| "simple_question".to_string());
     let template = template::load_template(&template_name).await?;
 
+    // Load or create session-scoped vector store
     let the_session_name = jade_config.session_name.clone().unwrap();
     let digest = sha256::digest(&the_session_name);
     let vector_store_name = format!("{}_vector_store.yaml", digest);
@@ -200,6 +305,7 @@ async fn handle_interactive_command(
         VectorStore::new(384, jade_config.session_name.clone().unwrap())?
     };
 
+    // Brain token budget = 25% of configured context window
     let max_brain_token_percentage = 0.25;
     let max_brain_tokens =
         (max_brain_token_percentage * jade_config.context_max_tokens as f32) as u16;
@@ -207,14 +313,24 @@ async fn handle_interactive_command(
     api::interactive_mode(&jade_config, vector_store, brain, &template).await
 }
 
-/// Determine Config Path
+/// Compute the path of the active configuration file.
 ///
-/// Decides the path for the configuration file. If the application is in a test environment,
-/// it loads the config from the project directory. Otherwise, it uses the user's config directory.
-/// The distinction ensures that tests do not interfere with a user's actual configuration.
+/// - In **test mode** (`IN_TEST_ENVIRONMENT` is set), this returns `./config.yaml`.
+/// - Otherwise, it returns `<config_dir>/config.yaml`, where `config_dir`
+///   is derived via [`directories::ProjectDirs`] with the tuple
+///   `("com", "awful-sec", "aj")`.
 ///
 /// # Returns
-/// - `Result<PathBuf, Box<dyn Error>>`: The path to the configuration file or an error
+/// Absolute path to `config.yaml`.
+///
+/// # Errors
+/// Returns an error if the current working directory cannot be read (test mode),
+/// or if the per-user config directory cannot be determined.
+///
+/// # Examples
+/// ```no_run
+/// let path = determine_config_path()?;
+/// ```
 fn determine_config_path() -> Result<PathBuf, Box<dyn Error>> {
     if env::var("IN_TEST_ENVIRONMENT").is_ok() {
         Ok(env::current_dir()?.join("config.yaml")) // Test environment
@@ -226,20 +342,34 @@ fn determine_config_path() -> Result<PathBuf, Box<dyn Error>> {
 use async_openai::types::ChatCompletionRequestSystemMessage;
 use async_openai::types::ChatCompletionRequestSystemMessageContent;
 use async_openai::types::ChatCompletionRequestUserMessageContent;
-/// Initialization Function
+
+/// Initialize per-user configuration files and templates.
 ///
-/// Handles the 'init' command. It is responsible for creating the necessary directories and
-/// files, and writing the default configuration and templates into them. It ensures that the
-/// application is ready for use, with all required setups completed.
+/// This creates the templates directory and writes both:
+/// - `templates/simple_question.yaml` — an example prompt file with a system + user message.
+/// - `templates/default.yaml` — a minimal default template with a system prompt.
+/// - `config.yaml` — a baseline configuration file with local defaults.
+///
+/// The function is **idempotent** with respect to directories and will overwrite the
+/// template files and config if they already exist.
 ///
 /// # Returns
-/// - `Result<(), Box<dyn Error>>`: Result type indicating success or error
+/// `Ok(())` on success.
+///
+/// # Errors
+/// Returns any file I/O or serialization errors.
+///
+/// # Examples
+/// ```no_run
+/// init()?;
+/// ```
 fn init() -> Result<(), Box<dyn Error>> {
     let config_dir = config_dir()?;
     let path = config_dir.join("templates");
     info!("Creating template config directory: {}", path.display());
     fs::create_dir_all(path.clone())?;
 
+    // Write example template (simple_question.yaml)
     let template_path = config_dir.join("templates/simple_question.yaml");
     info!("Creating template file: {}", template_path.display());
     let user_message = ChatCompletionRequestMessage::User(ChatCompletionRequestUserMessage {
@@ -249,6 +379,7 @@ fn init() -> Result<(), Box<dyn Error>> {
         name: None,
     });
 
+    // A didactic system message with sample Rust code; this is just an example template.
     let system_message_content = "Use `std::fs::File` and `std::io::Read` in Rust to read a file:
 ```rust
 use std::fs::File;
@@ -269,6 +400,7 @@ fn main() -> io::Result<()> {
         name: None,
     });
 
+    // Also write a minimal default template
     let template = template::ChatTemplate {
         system_prompt: "You are Awful Jade, a helpful AI assistant programmed by Awful Security."
             .to_string(),
@@ -282,12 +414,13 @@ fn main() -> io::Result<()> {
     // Create the default template
     create_default_template(&path)?;
 
+    // Baseline config file with local defaults
     let config_path = config_dir.join("config.yaml");
     info!("Creating config file: {}", config_path.display());
     let config = config::AwfulJadeConfig {
         api_base: "http://localhost:5001/v1".to_string(),
         api_key: "CHANGEME".to_string(),
-        model: "mistrel-7b-openorca".to_string(),
+        model: "jade_qwen3_4b".to_string(),
         context_max_tokens: 8192,
         assistant_minimum_context_tokens: 2048,
         stop_words: vec!["\n<|im_start|>".to_string(), "<|im_end|>".to_string()],
@@ -301,22 +434,32 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 
-/// Create Default Template
+/// Write the built-in default template (`templates/default.yaml`).
 ///
-/// Generates the default chat template during the initialization process. It writes a predefined
-/// template to a file, ensuring that there's a starting point for the user to engage with the AI.
+/// The template contains only a system prompt and an empty `messages` array.
+/// This file provides a simple, predictable default for quick experiments.
 ///
 /// # Parameters
-/// - `templates_dir: &Path`: The directory where the template will be stored
+/// - `templates_dir`: Directory where the file will be created.
 ///
 /// # Returns
-/// - `Result<(), Box<dyn Error>>`: Result type indicating success or error
+/// `Ok(())` on success.
+///
+/// # Errors
+/// Returns I/O errors when creating or writing the file.
+///
+/// # Examples
+/// ```no_run
+/// let dir = std::path::Path::new("/some/config/templates");
+/// create_default_template(dir)?;
+/// ```
 fn create_default_template(templates_dir: &std::path::Path) -> Result<(), Box<dyn Error>> {
     let default_template_path = templates_dir.join("default.yaml");
     info!(
         "Creating default template file: {}",
         default_template_path.display()
     );
+    // Minimal template with only a system prompt
     let default_template_content = r#"
 system_prompt: "Your name is Awful Jade, you are a helpful AI assistant programmed by Awful Security."
 messages: []
@@ -325,14 +468,30 @@ messages: []
     Ok(())
 }
 
-/// Configuration Directory Retrieval
+/// Resolve the per-user configuration directory.
 ///
-/// Uses the `directories` crate to fetch the appropriate configuration directory based on the
-/// operating system. This ensures compatibility and adherence to the OS's directory structure
-/// and conventions.
+/// Uses [`directories::ProjectDirs`] with the tuple `("com", "awful-sec", "aj")`
+/// to compute an OS-appropriate configuration directory:
+///
+/// - **macOS**: `~/Library/Application Support/com.awful-sec.aj`
+/// - **Linux**: `~/.config/aj`
+/// - **Windows**: `%APPDATA%\awful-sec\aj`
+///
+/// This location is used for `config.yaml`, the `templates/` folder, the
+/// per-session vector store YAMLs, and the downloaded `all-mini-lm-l12-v2` model.
 ///
 /// # Returns
-/// - `Result<PathBuf, Box<dyn Error>>`: The path to the configuration directory or an error
+/// Absolute path to the config directory.
+///
+/// # Errors
+/// Returns an error if the directory cannot be determined (rare; indicates a
+/// nonstandard environment).
+///
+/// # Examples
+/// ```no_run
+/// let root = config_dir()?;
+/// println!("config root: {}", root.display());
+/// ```
 pub fn config_dir() -> Result<std::path::PathBuf, Box<dyn Error>> {
     let proj_dirs = ProjectDirs::from("com", "awful-sec", "aj")
         .ok_or("Unable to determine config directory")?;

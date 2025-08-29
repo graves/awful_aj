@@ -1,24 +1,50 @@
 //! # API Module
 //!
-//! This module handles interactions with the OpenAI API for asking questions and receiving responses.
+//! High-level chat plumbing for Awful Jade. This module wires together:
 //!
-//! It provides functions to create a client, prepare session messages, add memories,
-//! stream AI responses, and manage an interactive user conversation.
+//! - An **OpenAI-compatible** client (via `async_openai`).
+//! - **Session messages** (system/template messages + rolling conversation).
+//! - Optional **semantic memory** via a [`VectorStore`] and a [`Brain`].
+//! - Either **streaming** or **non-streaming** completions, selected by
+//!   [`AwfulJadeConfig::should_stream`].
 //!
-//! # Example
+//! ## What this module does
+//! 1. **Builds the API client** from config ([`create_client`]).
+//! 2. **Prepares the message stack** depending on whether we have an existing session
+//!    ([`get_session_messages`], [`prepare_messages_for_existing_session`], [`prepare_messages`]).
+//! 3. **Optionally injects memory** retrieved from the vector store into the brain
+//!    ([`add_memories_to_brain`]).
+//! 4. **Calls the chat API** either in streaming mode ([`stream_response`]) or one-shot mode
+//!    ([`fetch_response`]) and **prints** (streaming) / **collects** (non-streaming) the content.
+//! 5. **Persists** assistant messages to the session DB when sessions are enabled.
 //!
+//! ## Sessions & memory
+//! If the configuration has `session_name: Some(...)`, the module:
+//! - Loads recent messages from the session DB (or seeds a new session).
+//! - When the token budget is exceeded, **ejects the oldest message pair** (user + assistant),
+//!   embeds them, and stores them in the [`VectorStore`]. The index is rebuilt after successful
+//!   inserts (HNSW build is cheap at small scales).
+//! - Retrieves nearby memories for the new query and injects them into the [`Brain`] preamble,
+//!   respecting the brain’s token budget configured by the caller.
+//!
+//! ## Streaming vs. non-streaming
+//! - When `config.should_stream == Some(true)`, [`stream_response`] is used. Tokens appear live
+//!   on stdout with lightweight color formatting, and the final assistant message is returned.
+//! - Otherwise [`fetch_response`] is used to perform a single request/response.
+//!
+//! ## Example
 //! ```no_run
 //! use awful_aj::api::ask;
 //! use awful_aj::config::AwfulJadeConfig;
 //! use awful_aj::template::ChatTemplate;
 //!
-//! // TODO
-//! // let config = AwfulJadeConfig::new(/* ... */);
-//! // let template = ChatTemplate::new(/* ... */);
-//! let question = "What is the meaning of life?".to_string();
-//!
-//! // let _ = ask(&config, question, &template, None, None);
+//! # async fn demo(cfg: AwfulJadeConfig, tpl: ChatTemplate) -> anyhow::Result<()> {
+//! let answer = ask(&cfg, "What is the meaning of life?".into(), &tpl, None, None).await?;
+//! println!("assistant said: {answer}");
+//! # Ok(())
+//! # }
 //! ```
+
 use crate::{
     brain::{Brain, Memory},
     config::{AwfulJadeConfig, establish_connection},
@@ -54,13 +80,21 @@ use std::{
 
 use tracing::{debug, error};
 
-/// Creates a new OpenAI API client from configuration.
+/// Create an OpenAI-compatible client from [`AwfulJadeConfig`].
 ///
-/// # Parameters
-/// - `config: &AwfulJadeConfig`: Configuration containing API base and key.
+/// - Uses `api_base` and `api_key`.
+/// - No retries are performed here; upstream code handles retry/stream policies.
 ///
-/// # Returns
-/// - `Result<Client<OpenAIConfig>, Box<dyn Error>>`: Created client or an error if initialization fails.
+/// # Errors
+/// Returns an error if client initialization fails (unlikely unless invalid config).
+///
+/// # Example
+/// ```no_run
+/// # use awful_aj::config::AwfulJadeConfig;
+/// # async fn demo(cfg: AwfulJadeConfig) -> anyhow::Result<()> {
+/// let client = awful_aj::api::tests::create_client_for_docs(&cfg)?; // internal helper in tests
+/// # Ok(()) }
+/// ```
 fn create_client(config: &AwfulJadeConfig) -> Result<Client<OpenAIConfig>, Box<dyn Error>> {
     let openai_config = OpenAIConfig::new()
         .with_api_key(config.api_key.clone())
@@ -69,20 +103,32 @@ fn create_client(config: &AwfulJadeConfig) -> Result<Client<OpenAIConfig>, Box<d
     Ok(Client::with_config(openai_config))
 }
 
-/// Streams the assistant's response from OpenAI and prints it to the console with formatting.
+/// Stream assistant tokens to stdout and return the final assistant message.
 ///
-/// If the conversation exceeds the token budget, older messages are ejected and stored.
+/// Behavior:
+/// - While the session exceeds its token budget, **eject** the oldest user/assistant pair,
+///   embed them, and store them in the vector store (if provided), then **rebuild** the index.
+/// - Compose request messages from `preamble_messages + conversation_messages`.
+/// - If the template specifies a JSON schema response format, it is forwarded to the API.
+/// - Print streamed tokens in blue/bold as they arrive.
+/// - Return a well-formed `Assistant` message containing the full streamed text.
 ///
 /// # Parameters
-/// - `client: &Client<OpenAIConfig>`: OpenAI client.
-/// - `model: String`: Model name to use.
-/// - `session_messages: &mut SessionMessages`: Session messages for this chat.
-/// - `config: &AwfulJadeConfig`: Application configuration.
-/// - `vector_store: Option<&mut VectorStore>`: Optional vector store for long-term memory.
-/// - `brain: Option<&mut Brain<'a>>`: Optional brain for managing session memory.
+/// - `client`: OpenAI client.
+/// - `model`: Model identifier (as accepted by your server).
+/// - `session_messages`: Mutable session state (preamble + rolling conversation).
+/// - `config`: App config (max tokens, stop words, etc.).
+/// - `template`: The chat template that may carry a `response_format`.
+/// - `vector_store`: Optional semantic memory store (for ejecting/adding memories).
+/// - `_brain`: Optional brain (unused here; memory injection happens before the call).
 ///
-/// # Returns
-/// - `Result<ChatCompletionRequestMessage, Box<dyn Error>>`: The assistant's response message.
+/// # Errors
+/// - Network/API errors when creating the stream.
+/// - I/O errors when writing to stdout.
+/// - Embedding/indexing errors if the vector store fails to add/build.
+///
+/// # Panics
+/// - Will `unwrap()` when writing to the locked stdout (operationally safe in TTYs).
 #[allow(deprecated)]
 async fn stream_response<'a>(
     client: &Client<OpenAIConfig>,
@@ -106,8 +152,10 @@ async fn stream_response<'a>(
                         let vector =
                             the_vector_store.embed_text_to_vector(&user_message_content)?;
                         let memory = Memory::new(Role::User, user_message_content);
-                        let res = the_vector_store.add_vector_with_content(vector, memory);
-                        if res.is_ok() {
+                        if the_vector_store
+                            .add_vector_with_content(vector, memory)
+                            .is_ok()
+                        {
                             the_vector_store.build()?;
                         }
                     }
@@ -123,8 +171,10 @@ async fn stream_response<'a>(
                         let vector =
                             the_vector_store.embed_text_to_vector(&assistant_message_content)?;
                         let memory = Memory::new(Role::User, assistant_message_content);
-                        let res = the_vector_store.add_vector_with_content(vector, memory);
-                        if res.is_ok() {
+                        if the_vector_store
+                            .add_vector_with_content(vector, memory)
+                            .is_ok()
+                        {
                             the_vector_store.build()?;
                         }
                     }
@@ -211,6 +261,13 @@ async fn stream_response<'a>(
     Ok(chat_completion_request_message)
 }
 
+/// Non-streaming chat: send a single request and return the assistant message.
+///
+/// This mirrors the eject-and-store behavior from [`stream_response`], but performs a
+/// single `create` call and aggregates the returned content into one `Assistant` message.
+///
+/// # Errors
+/// Propagates API, I/O, embedding, and index-build errors.
 #[allow(clippy::collapsible_match, deprecated)]
 async fn fetch_response<'a>(
     client: &Client<OpenAIConfig>,
@@ -239,8 +296,10 @@ async fn fetch_response<'a>(
                         let vector =
                             the_vector_store.embed_text_to_vector(&user_message_content)?;
                         let memory = Memory::new(Role::User, user_message_content);
-                        let res = the_vector_store.add_vector_with_content(vector, memory);
-                        if res.is_ok() {
+                        if the_vector_store
+                            .add_vector_with_content(vector, memory)
+                            .is_ok()
+                        {
                             the_vector_store.build()?;
                         }
                     }
@@ -257,8 +316,10 @@ async fn fetch_response<'a>(
                             let vector = the_vector_store
                                 .embed_text_to_vector(&assistant_message_content)?;
                             let memory = Memory::new(Role::User, assistant_message_content);
-                            let res = the_vector_store.add_vector_with_content(vector, memory);
-                            if !res.is_err() {
+                            if the_vector_store
+                                .add_vector_with_content(vector, memory)
+                                .is_ok()
+                            {
                                 the_vector_store.build()?;
                             }
                         }
@@ -327,17 +388,37 @@ async fn fetch_response<'a>(
 }
 
 use crate::api::ChatCompletionRequestAssistantMessageContent::Text;
-/// Asks a single question using the OpenAI API and processes the response.
+
+/// Ask a single question and return the assistant’s textual answer.
+///
+/// Pipeline:
+/// 1. Build client and session messages (loading session state when available).
+/// 2. Optionally add nearest-neighbor memories from the vector store into the brain.
+/// 3. Apply template `pre_user_message_content` / `post_user_message_content`.
+/// 4. Send the request (streaming or non-streaming).
+/// 5. Persist the assistant message to the session DB (when sessions are enabled).
 ///
 /// # Parameters
-/// - `config: &AwfulJadeConfig`: Configuration for the API client.
-/// - `question: String`: The user's input question.
-/// - `template: &ChatTemplate`: Template used to construct the system prompt.
-/// - `vector_store: Option<&mut VectorStore>`: Optional vector store.
-/// - `brain: Option<&mut Brain<'a>>`: Optional session brain.
+/// - `config`: App configuration (API base/key, model, token budgets, etc.).
+/// - `question`: User input.
+/// - `template`: Chat template (system prompt + seed messages).
+/// - `vector_store`: Optional vector store (used to fetch/store memories).
+/// - `brain`: Optional brain (holds the working memory/preamble).
 ///
 /// # Returns
-/// - `Result<(), Box<dyn Error>>`: Success or error.
+/// The assistant’s textual content.
+///
+/// # Errors
+/// Propagates API, I/O, (de)serialization, embedding, and DB errors.
+///
+/// # Example
+/// ```no_run
+/// # async fn demo(cfg: awful_aj::config::AwfulJadeConfig, tpl: awful_aj::template::ChatTemplate)
+/// # -> anyhow::Result<()> {
+/// let answer = awful_aj::api::ask(&cfg, "Ping?".into(), &tpl, None, None).await?;
+/// println!("assistant: {answer}");
+/// # Ok(()) }
+/// ```
 #[allow(clippy::collapsible_match)]
 pub async fn ask<'a>(
     config: &AwfulJadeConfig,
@@ -386,19 +467,7 @@ pub async fn ask<'a>(
             )
             .await?
         }
-        Some(false) => {
-            fetch_response(
-                &client,
-                config.model.clone(),
-                &mut session_messages,
-                config,
-                template,
-                vector_store,
-                brain,
-            )
-            .await?
-        }
-        None => {
+        Some(false) | None => {
             fetch_response(
                 &client,
                 config.model.clone(),
@@ -423,27 +492,22 @@ pub async fn ask<'a>(
                 "assistant".to_string(),
                 assistant_response_content_text.clone(),
             );
-
-            return Ok(assistant_response_content_text.clone());
+            return Ok(assistant_response_content_text);
         }
     };
 
     Err("No assistant response".into())
 }
 
-/// Prepares session messages for a new or ongoing session based on provided configuration.
+/// Prepare session messages for a new or existing session.
 ///
-/// If a session already exists, it loads historical messages from the database.
-/// Otherwise, it constructs messages using the brain's memories and template.
+/// - If `config.session_name.is_some()` **and** a brain is provided, we attempt to
+///   load the conversation from the DB and persist the new user question immediately.
+/// - Otherwise we create a fresh session with system + template messages. When a brain
+///   is provided, its preamble (system + “Ok” handshake + internal state) is included.
 ///
-/// # Parameters
-/// - `brain: &Option<&mut Brain>`: Optional brain for memory retrieval.
-/// - `config: &AwfulJadeConfig`: Application configuration.
-/// - `template: &ChatTemplate`: Chat prompt and message template.
-/// - `question: &String`: User's input question.
-///
-/// # Returns
-/// - `Result<SessionMessages, Box<dyn Error>>`: Prepared session messages.
+/// # Errors
+/// Returns DB/serialization errors when loading or persisting messages.
 fn get_session_messages(
     brain: &Option<&mut Brain>,
     config: &AwfulJadeConfig,
@@ -494,19 +558,20 @@ fn get_session_messages(
     Ok(session_messages)
 }
 
-/// Adds relevant memories from the vector store into the brain based on a query.
+/// Retrieve nearby memories from the vector store and inject them into the brain.
 ///
-/// Retrieves nearest neighbors to the query, verifies distance thresholds, and injects
-/// their contents into the brain's working memory.
+/// Steps:
+/// 1. Embed the query.
+/// 2. `search_nodes` for the top-3 neighbors.
+/// 3. If a neighbor’s **Euclidean distance** is `< 1.0`, add its content to the brain.
+/// 4. Rebuild the brain preamble (so it lands in the current request).
 ///
-/// # Parameters
-/// - `vector_store: &Option<&mut VectorStore>`: Vector store for retrieval.
-/// - `question: &String`: Query to retrieve relevant memories.
-/// - `session_messages: &mut SessionMessages`: Session context.
-/// - `brain: &mut Option<&mut Brain>`: Brain to update with memories.
+/// # Notes
+/// - This expects the vector store to map IDs → [`Memory`].
+/// - Distance threshold (`< 1.0`) is empirical and can be tuned.
 ///
-/// # Returns
-/// - `Result<(), Box<dyn Error>>`: Success or error.
+/// # Errors
+/// Embedding/search errors, and preamble build errors (unlikely).
 fn add_memories_to_brain(
     vector_store: &Option<&mut VectorStore>,
     question: &str,
@@ -526,8 +591,6 @@ fn add_memories_to_brain(
         });
 
         for (_vector, id, euclidean_distance) in neighbor_vec_distances {
-            // Here, retrieve the actual content corresponding to neighbor_id and add it to Brain's memory
-            // This requires a mechanism to map IDs to actual content, which needs to be implemented in the VectorStore or another appropriate place
             if let Some(neighbor_content) = vector_store.get_content_by_id(id.unwrap()) {
                 if let Some(ref mut brain) = brain {
                     if euclidean_distance < 1.0 {
@@ -545,17 +608,15 @@ fn add_memories_to_brain(
     Ok(())
 }
 
-/// Constructs session messages for a new conversation (no existing session).
+/// Build a brand-new session message stack (no prior DB history).
 ///
-/// This includes the brain's preamble and any messages specified in the template.
+/// Puts together:
+/// - The **system** message (from the template).
+/// - The **brain preamble** (system + brain state + assistant “Ok”), if a brain is supplied.
+/// - Any **template messages** bundled with the template.
 ///
-/// # Parameters
-/// - `template: &ChatTemplate`: Chat prompt template.
-/// - `config: &AwfulJadeConfig`: Application configuration.
-/// - `brain: &Brain`: Brain containing working memory.
-///
-/// # Returns
-/// - `Result<SessionMessages, Box<dyn Error>>`: Prepared session messages.
+/// # Errors
+/// Returns formatting/serialization errors (rare).
 fn prepare_messages(
     template: &ChatTemplate,
     config: &AwfulJadeConfig,
@@ -599,19 +660,21 @@ fn prepare_messages(
 
 use crate::models::*;
 use diesel::prelude::*;
-/// Constructs session messages for an existing session.
-///
-/// Loads the conversation history from the database if available, otherwise falls back
-/// to a new session initialization.
-///
-/// # Parameters
-/// - `template: &ChatTemplate`: Chat prompt template.
-/// - `config: &AwfulJadeConfig`: Application configuration.
-/// - `brain: &Brain`: Brain containing working memory.
-///
-/// # Returns
-/// - `Result<SessionMessages, Box<dyn Error>>`: Prepared session messages.
+
 #[allow(deprecated)]
+/// Build/restore a session message stack from the DB, or seed a new one.
+///
+/// If the conversation exists:
+/// - The first `3 + template.messages.len()` messages are treated as **preamble**
+///   (system, brain JSON, assistant “Ok”, then the template messages).
+/// - The remaining messages are loaded as **conversation** messages.
+///
+/// If the conversation does **not** exist:
+/// - Build a fresh brain preamble and template messages, **persist** them to the DB,
+///   and return the seeded `SessionMessages`.
+///
+/// # Errors
+/// Returns DB errors when querying/persisting messages.
 fn prepare_messages_for_existing_session(
     template: &ChatTemplate,
     config: &AwfulJadeConfig,
@@ -627,7 +690,7 @@ fn prepare_messages_for_existing_session(
             let recent_messages = session_messages.query_conversation_messages(&conversation);
 
             if let Ok(mut recent_msgs) = recent_messages {
-                // If there are recent_msgs then the first 3 are System Prompt, Brain Message, Assistant Acknowledgement, the N Template Messages
+                // Preamble = System Prompt, Brain Message, Assistant Acknowledgement, then N template messages
                 if !recent_msgs.is_empty() {
                     let preamble_messages = recent_msgs.drain(0..(3 + template.messages.len()));
                     for msg in preamble_messages {
@@ -759,19 +822,19 @@ fn prepare_messages_for_existing_session(
 }
 
 use std::io::Read;
-/// Enters interactive conversation mode with the assistant.
+
+/// Interactive REPL loop.
 ///
-/// Allows the user to engage in a continuous session, sending multiple inputs and
-/// receiving responses, until they exit by typing "exit".
+/// Prints a styled `You:` prompt, reads from **stdin** (until EOF for the line),
+/// builds/updates session messages, streams the assistant response, and persists it
+/// to the session DB. Type `exit` to leave the loop.
 ///
-/// # Parameters
-/// - `config: &AwfulJadeConfig`: Application configuration.
-/// - `vector_store: VectorStore`: Store for embeddings and past memories.
-/// - `brain: Brain<'a>`: Brain managing the session.
-/// - `template: &ChatTemplate`: Chat template to use.
+/// **Note:** This reads with `stdin.read_to_string`, which consumes all available
+/// stdin; when running in a terminal, provide input followed by EOF (Ctrl-D on Unix,
+/// Ctrl-Z then Enter on Windows) or adapt to line-by-line reading if desired.
 ///
-/// # Returns
-/// - `Result<(), Box<dyn Error>>`: Success or error.
+/// # Errors
+/// Propagates API, I/O, and persistence errors.
 #[allow(clippy::single_match)]
 pub async fn interactive_mode<'a>(
     config: &AwfulJadeConfig,
@@ -898,6 +961,13 @@ mod tests {
         let _ = tracing_subscriber::fmt::try_init();
     }
 
+    /// Helper used in doc examples.
+    pub(super) fn create_client_for_docs(
+        cfg: &AwfulJadeConfig,
+    ) -> Result<Client<OpenAIConfig>, Box<dyn Error>> {
+        super::create_client(cfg)
+    }
+
     // Mock configuration for testing
     fn mock_config() -> AwfulJadeConfig {
         AwfulJadeConfig {
@@ -938,7 +1008,7 @@ mod tests {
     async fn test_create_client() {
         setup();
         let config = mock_config();
-        let client = create_client(&config);
+        let client = super::create_client(&config);
         assert!(client.is_ok(), "Failed to create client");
     }
 
@@ -958,7 +1028,7 @@ mod tests {
             session_name: None,
             should_stream: None,
         };
-        let messages = prepare_messages(&template, &config, Some(&&mut brain));
+        let messages = super::prepare_messages(&template, &config, Some(&&mut brain));
         assert!(messages.is_ok(), "Failed to prepare messages");
         let session_messages = messages.unwrap();
         let message_count =
