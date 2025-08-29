@@ -37,16 +37,15 @@ cargo install awful_aj
 
 This gives you the aj binary.
 
-Requirements
-	•	Rust (use rustup if you don’t have it).
-	•	Diesel CLI if you want to reset or migrate the session DB.
-	•	Python 3.11 and pytorch 2.4.0.
-	
-
-The model (all-mini-lm-l12-v2) will be downloaded automatically into your platform’s config directory (thanks to directories):
-	•	macOS: ~/Library/Application Support/com.awful-sec.aj/
-	•	Linux: ~/.config/aj/
-	•	Windows: C:\Users\YOU\AppData\Roaming\awful-sec\aj/
+Requirements:
+- Rust (use rustup if you don’t have it).
+- Diesel CLI if you want to reset or migrate the session DB.
+- Python 3.11 and pytorch 2.4.0.
+  
+The BERT embeddings model (all-mini-lm-l12-v2) will be downloaded automatically into your platform’s config directory:
+- macOS: `~/Library/Application Support/com.awful-sec.aj/`
+- Linux: `~/.config/aj/`
+- Windows: `C:\Users\YOU\AppData\Roaming\awful-sec\aj/`
 
 ---
 
@@ -94,9 +93,9 @@ aj init
 ```
 
 This will generate:
-	•	`config.yaml` with sensible defaults
-	•	`templates/default.yaml` and `templates/simple_question.yaml`
-	•	A SQLite database (`aj.db`) for sessions
+- `config.yaml` with sensible defaults
+- `templates/default.yaml` and `templates/simple_question.yaml`
+- A SQLite database (`aj.db`) for sessions
 
 ---
 
@@ -163,11 +162,11 @@ Add more, swap them in with --template <name>.
 ---
 
 ## 🧠 How it Works
-	•	Brain: Keeps memories in a deque, trims when it gets too wordy.
-	•	VectorStore: Embeds your inputs using all-mini-lm-l12-v2, saves to HNSW index.
-	•	Config: YAML-based, sane defaults, easy to tweak.
-	•	Templates: Prompt engineering without copy-pasting into your terminal like a caveman.
-	•	Ensure All Mini: If the BERT model’s not there, AJ fetches it automagically.
+- Brain: Keeps memories in a deque, trims when it gets too wordy.
+- VectorStore: Embeds your inputs using all-mini-lm-l12-v2, saves to HNSW index.
+- Config: YAML-based, sane defaults, easy to tweak.
+- Templates: Prompt engineering without copy-pasting into your terminal like a caveman.
+- Ensure All Mini: If the BERT model’s not there, AJ fetches it automagically.
 
 ---
 
