@@ -1,130 +1,192 @@
-# aj
+# Awful Jade (aj) 🐍🧠
 
-[![crates.io](https://img.shields.io/crates/v/awful_aj.svg)](https://crates.io/crates/awful_aj)
-[![docs.rs](https://docs.rs/awful_aj/badge.svg)](https://docs.rs/awful_aj)
+[![Crates.io](https://img.shields.io/crates/v/awful_aj.svg)](https://crates.io/crates/awful_aj)
+[![Docs.rs](https://docs.rs/awful_aj/badge.svg)](https://docs.rs/awful_aj)
 
-`aj` is a command-line tool designed to facilitate the development of features on top of locally running Large Language Models (LLMs). It is specifically tailored to work seamlessly with the [Text Generation Web UI](https://github.com/oobabooga/text-generation-webui/) with the [OpenAI extension enabled](https://github.com/oobabooga/text-generation-webui/tree/main/extensions/openai), ensuring a smooth and efficient development experience without the need for complex configurations or setups.
+Awful Jade (aka **`aj`**) is your command-line sidekick for working with Large Language Models (LLMs).  
+Think of it as an _LLM Swiss Army knife with the best intentions_ 😇:  
+Ask questions, run interactive sessions, sanitize messy OCR book dumps, synthesize exam questions…  
+all without leaving your terminal.
+
+It’s built in Rust for speed, safety, and peace of mind. 🦀
 
 ![Awful Jade CLI tool logo](aj.png)
 
-## Features
+---
 
-- **Local Large Language Model Interaction**: Directly interact with your locally running LLM from the command line.
-- **Seamless Integration**: Works out-of-the-box with the [Text Generation Web UI](https://github.com/oobabooga/text-generation-webui/) with the [OpenAI extension enabled](https://github.com/oobabooga/text-generation-webui/tree/main/extensions/openai).
-- **Custom Templates**: Utilize pre-made templates for common queries or create your own for specialized tasks.
-- **Rich, Colored Responses**: Enjoy interactive, colored, and rich-text responses directly in your terminal for an enhanced user experience.
+## ✨ Features
 
-## Installation
+- **Ask the AI**: Run `aj ask "question"` and get answers powered by your configured model.  
+- **Interactive Mode**: A REPL-style conversation with memory & vector search (your AI “remembers” past context).  
+- **Vector Store**: Uses HNSW + sentence embeddings to remember what you’ve said before. Basically, your AI gets a brain. 🧠  
+- **Brains with Limits**: Keeps only as many tokens as you allow. When full, it forgets the oldest stuff. (Like you after 3 AM pizza.)  
+- **Config & Templates**: YAML-driven configs and prompt templates. Customize everything, break nothing.  
+- **Auto-downloads BERT embeddings model**: If the required `all-mini-lm-l12-v2` model isn’t around, `aj` will politely fetch and unzip it into your config dir.  
 
-For now `aj` requires `libtorch` to be installed independently. Get the correct version of `libtorch` from [pytorch](https://download.pytorch.org/libtorch/cu124/).
+---
 
-### Linux:
+## 📦 Installation
 
-```bash
-export LIBTORCH=/path/to/libtorch
-export LD_LIBRARY_PATH=${LIBTORCH}/lib:$LD_LIBRARY_PATH
-```
-
-### Windows
-
-```powershell
-$Env:LIBTORCH = "X:\path\to\libtorch"
-$Env:Path += ";X:\path\to\libtorch\lib"
-```
-
-### macOS + Homebrew
-
-#### bash
+From [crates.io](https://crates.io/crates/awful_aj):
 
 ```bash
-brew install pytorch jq
-export LIBTORCH=$(brew --cellar pytorch)/$(brew info --json pytorch | jq -r '.[0].installed[0].version')
-export DYLD_LIBRARY_PATH=${LIBTORCH}/lib:$LD_LIBRARY_PATH
+cargo install awful_aj
 ```
 
-#### nushell
+This gives you the aj binary.
 
-```nushell
-brew install pytorch jq
-$env.LIBTORCH = $"(brew --cellar pytorch)/(brew info --json pytorch | jq -r '.[0].installed[0].version')"
-$env.DYLD_LIBRARY_PATH = $"($env.LIBTORCH)/lib"
+Requirements
+	•	Rust (use rustup if you don’t have it).
+	•	Diesel CLI if you want to reset or migrate the session DB.
+	•	Python 3.11 and pytorch 2.4.0.
+	
+
+The model (all-mini-lm-l12-v2) will be downloaded automatically into your platform’s config directory (thanks to directories):
+	•	macOS: ~/Library/Application Support/com.awful-sec.aj/
+	•	Linux: ~/.config/aj/
+	•	Windows: C:\Users\YOU\AppData\Roaming\awful-sec\aj/
+
+---
+
+## Setup (steps will vary according to your operating system)
+
+1. Install conda python version manager.
+
+```bash
+brew install miniconda
 ```
 
-### Platform agnostic
+2. Create Python 3.11 virtual environment named aj and activate it.
 
-Install `aj` using `cargo`, the Rust package manager. If Rust and `cargo` are not already installed, get them from [rustup](https://rustup.rs/), and then install `aj`:
-```sh
-cargo install --git https://github.com/graves/awful_aj
+```bash
+conda create -n aj python=3.11
+conda activate aj
+````
+
+3. Install pytorch 2.4.0
+
+```bash
+pip install torch==2.4.0 --index-url https://download.pytorch.org/whl/cp
+````
+
+4. Add the following to your shell initialization.
+
+```bash
+export LIBTORCH_USE_PYTORCH=1
+export LIBTORCH='/opt/homebrew/Caskroom/miniconda/base/pkgs/pytorch-2.4.0-py3.11_0/lib/python3.11/site-packages/torch' # Or wherever Conda installed libtorch on your OS
+export DYLD_LIBRARY_PATH="$LIBTORCH/lib"
+
+conda activate aj
 ```
 
-## Usage
+---
 
-### Initialization
+## 🚀 Usage
 
-Before you start using `aj`, initiate it to create the necessary configuration and template files:
-```sh
+1. Initialize
+
+Create default configs and templates:
+
 aj init
-```
 
-Then run the diesel database migrations. The database URL will change depending on where your database is initialized. `aj` uses the `dirs_rs` library to determine the platforms configuration directory.
-```sh
-diesel database reset --database-url "/Users/tg/Library/Application Support/com.awful-sec.aj/aj.db"
-```
+This will generate:
+	•	config.yaml with sensible defaults
+	•	templates/default.yaml and templates/simple_question.yaml
+	•	A SQLite database (aj.db) for sessions
 
-This command creates files and folders in the platforms configuration directory and populates them with default configurations and templates.
+---
 
-### Configuration
+2. Ask a Question
 
-The configuration is stored in `~/.config/aj/config.yaml`. Update the `api_key` field with your actual API key before utilizing the `aj` tool. The initial configuration looks like this:
-```yaml
+aj ask "Is Bibi really from Philly?"
+
+You’ll get a colorful, model-dependent answer.
+
+---
+
+3. Interactive Mode
+
+Talk with the AI like it’s your therapist, mentor, or rubber duck:
+
+aj interactive
+
+Supports memory via the vector store, so it won’t immediately forget your name.
+(Unlike your barista.)
+
+---
+
+4. Configuration
+
+Edit your config at:
+
+~/.config/aj/config.yaml   # Linux
+~/Library/Application Support/com.awful-sec.aj/config.yaml   # macOS
+
+Example:
+
 api_base: "http://localhost:1234/v1"
 api_key: "CHANGEME"
-model: "hermes-2-pro-mistral-7b"
+model: "jade_qwen3_4b_mlx"
 context_max_tokens: 8192
 assistant_minimum_context_tokens: 2048
-stop_words: ["<|im_end|>\\n<|im_start|>", "<|im_start|>\n"]
-session_db_url: "/Users/tg/Library/Application Support/com.awful-sec.aj/aj.db"
-```
+stop_words:
+  - "<|im_end|>\\n<|im_start|>"
+  - "<|im_start|>\n"
+session_db_url: "/Users/you/Library/Application Support/com.awful-sec.aj/aj.db"
 
-### Asking Questions
 
-To ask a question, use the ask command followed by your question in quotes:
-```sh
-aj ask "Is Bibi (Netanyahu) really from Philly?"
-```
+---
 
-If no question is provided, a default question is used.
+5. Templates
 
-### Templates
+Templates are YAML files in your config directory.
+Here’s a baby template:
 
-Templates reside in the `~/.config/aj/templates` directory. Feel free to add or modify templates as needed. A default template, `simple_question.yml`, is provided during initialization.
+system_prompt: "You are Awful Jade, a helpful AI assistant programmed by Awful Security."
+messages: []
 
-## Development
+Add more, swap them in with --template <name>.
 
-Clone the repository:
-```sh
+---
+
+🧠 How it Works
+	•	Brain: Keeps memories in a deque, trims when it gets too wordy.
+	•	VectorStore: Embeds your inputs using all-mini-lm-l12-v2, saves to HNSW index.
+	•	Config: YAML-based, sane defaults, easy to tweak.
+	•	Templates: Prompt engineering without copy-pasting into your terminal like a caveman.
+	•	Ensure All Mini: If the BERT model’s not there, AJ fetches it automagically.
+
+---
+
+🧑‍💻 Development
+
+Clone, hack, repeat:
+
 git clone https://github.com/graves/awful_aj.git
 cd awful_aj
-```
-Build the project:
-```sh
 cargo build
-```
+
 Run tests:
-```sh
+
 cargo test
-```
 
-When running the test suite you can safely ignore the following error:
-```
-2023-10-12T21:08:39.726156Z ERROR aj::api: Received error: stream failed: Invalid header value: "application/json"
-error: stream failed: Invalid header value: "application/json"
-```
+---
 
-## Contributing
+🤝 Contributing
 
-Contributions are welcome! Feel free to open a PR.
+PRs welcome!
+Bugs, docs, new templates, vector hacks—bring it on.
+But remember: with great power comes great YAML.
 
-## License
+--
 
-awful_aj is under the [MIT License](LICENSE).
+📜 License
+
+MIT. Do whatever you want, just don’t blame us when your AI remembers your browser history.
+
+---
+
+💡 Awful Jade: bad name, good brain.
+
+---
+
