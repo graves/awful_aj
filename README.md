@@ -3,7 +3,7 @@
 [![Crates.io](https://img.shields.io/crates/v/awful_aj.svg)](https://crates.io/crates/awful_aj)
 [![Docs.rs](https://docs.rs/awful_aj/badge.svg)](https://docs.rs/awful_aj)
 
-Awful Jade (aka **`aj`**) is your command-line sidekick for working with Large Language Models (LLMs).  
+**Awful Jade** (aka **`aj`**) is your command-line sidekick for working with Large Language Models (LLMs).  
 
 Think of it as an _LLM Swiss Army knife with the best intentions_ 😇.
 
@@ -50,7 +50,7 @@ The model (all-mini-lm-l12-v2) will be downloaded automatically into your platfo
 
 ---
 
-## Setup (steps will vary according to your operating system)
+## 👷🏽‍♀️ Setup (steps will vary according to your operating system)
 
 1. Install conda python version manager.
 
@@ -89,18 +89,22 @@ conda activate aj
 
 Create default configs and templates:
 
+```
 aj init
+```
 
 This will generate:
-	•	config.yaml with sensible defaults
-	•	templates/default.yaml and templates/simple_question.yaml
-	•	A SQLite database (aj.db) for sessions
+	•	`config.yaml` with sensible defaults
+	•	`templates/default.yaml` and `templates/simple_question.yaml`
+	•	A SQLite database (`aj.db`) for sessions
 
 ---
 
 2. Ask a Question
 
+```
 aj ask "Is Bibi really from Philly?"
+```
 
 You’ll get a colorful, model-dependent answer.
 
@@ -110,7 +114,9 @@ You’ll get a colorful, model-dependent answer.
 
 Talk with the AI like it’s your therapist, mentor, or rubber duck:
 
+```
 aj interactive
+```
 
 Supports memory via the vector store, so it won’t immediately forget your name.
 (Unlike your barista.)
@@ -121,11 +127,14 @@ Supports memory via the vector store, so it won’t immediately forget your name
 
 Edit your config at:
 
+```
 ~/.config/aj/config.yaml   # Linux
 ~/Library/Application Support/com.awful-sec.aj/config.yaml   # macOS
+```
 
 Example:
 
+```
 api_base: "http://localhost:1234/v1"
 api_key: "CHANGEME"
 model: "jade_qwen3_4b_mlx"
@@ -135,7 +144,7 @@ stop_words:
   - "<|im_end|>\\n<|im_start|>"
   - "<|im_start|>\n"
 session_db_url: "/Users/you/Library/Application Support/com.awful-sec.aj/aj.db"
-
+```
 
 ---
 
@@ -144,14 +153,16 @@ session_db_url: "/Users/you/Library/Application Support/com.awful-sec.aj/aj.db"
 Templates are YAML files in your config directory.
 Here’s a baby template:
 
+```
 system_prompt: "You are Awful Jade, a helpful AI assistant programmed by Awful Security."
 messages: []
+```
 
 Add more, swap them in with --template <name>.
 
 ---
 
-🧠 How it Works
+## 🧠 How it Works
 	•	Brain: Keeps memories in a deque, trims when it gets too wordy.
 	•	VectorStore: Embeds your inputs using all-mini-lm-l12-v2, saves to HNSW index.
 	•	Config: YAML-based, sane defaults, easy to tweak.
@@ -160,21 +171,25 @@ Add more, swap them in with --template <name>.
 
 ---
 
-🧑‍💻 Development
+## 🧑‍💻 Development
 
 Clone, hack, repeat:
 
+```
 git clone https://github.com/graves/awful_aj.git
 cd awful_aj
 cargo build
+```
 
 Run tests:
 
+```
 cargo test
+```
 
 ---
 
-🤝 Contributing
+## 🤝 Contributing
 
 PRs welcome!
 Bugs, docs, new templates, vector hacks—bring it on.
@@ -182,7 +197,7 @@ But remember: with great power comes great YAML.
 
 --
 
-📜 License
+## 📜 License
 
 MIT. Do whatever you want, just don’t blame us when your AI remembers your browser history.
 
