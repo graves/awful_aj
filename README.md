@@ -11,7 +11,7 @@ all without leaving your terminal.
 
 It’s built in Rust for speed, safety, and peace of mind. 🦀
 
-![Awful Jade CLI tool logo](aj.png)
+![Awful Jade CLI tool logo](aj.jpeg)
 
 ---
 
