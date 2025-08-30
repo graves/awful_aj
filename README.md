@@ -16,6 +16,25 @@ It’s built in Rust for speed, safety, and peace of mind. 🦀
 
 ---
 
+```
+λ aj --help
+Awful Jade – a CLI for local LLM tinkering with memories, templates, and vibes.
+
+Usage: aj <COMMAND>
+
+Commands:
+  ask          Ask a single question and print the assistant’s response
+  interactive  Start an interactive REPL-style conversation
+  init         Initialize configuration and default templates in the platform config directory
+  help         Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+```
+
+---
+
 ## ✨ Features
 
 - **Ask the AI**: Run `aj ask "question"` and get answers powered by your configured model.  
@@ -194,7 +213,7 @@ PRs welcome!
 Bugs, docs, new templates, vector hacks—bring it on.
 But remember: with great power comes great YAML.
 
---
+---
 
 ## 📜 License
 
