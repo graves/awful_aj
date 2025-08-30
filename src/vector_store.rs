@@ -242,9 +242,16 @@ impl VectorStore {
     /// ```
     pub fn new(dimension: usize, the_session_name: String) -> Result<Self, Box<dyn Error>> {
         let index = HNSWIndex::new(dimension, &HNSWParams::default());
-        let model = SentenceEmbeddingsBuilder::local("all-mini-lm-l12-v2")
-            .create_model()
-            .map_err(|e| format!("failed to load embedding model: {e}"))?;
+
+        let model_root = Self::model_dir()?;
+        if !model_root.join("config.json").exists() {
+            return Err(format!(
+                "BERT model not found at {}. Run ensure_all_mini() first or set AWFUL_AJ_BERT_DIR.",
+                model_root.display()
+            )
+            .into());
+        }
+        let model = SentenceEmbeddingsBuilder::local(&model_root).create_model()?;
 
         let digest = sha256::digest(the_session_name);
         let uuid = digest.as_bytes().iter().map(|b| *b as u64).sum();

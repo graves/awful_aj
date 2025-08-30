@@ -24,32 +24,23 @@
 //!
 //! ## Basic usage
 //!
-//! ```no_run
-//! use diesel::prelude::*;
-//! use awful_aj::config::establish_connection;
-//! use awful_aj::models::{Conversation, Message};
-//!
-//! let mut conn = establish_connection("aj.db");
-//!
-//! // Insert a conversation
-//! let convo = diesel::insert_into(crate::schema::conversations::table)
-//!     .values(&Conversation { id: None, session_name: "demo".into() })
-//!     .returning(Conversation::as_returning())
-//!     .get_result(&mut conn)?;
-//!
-//! // Insert a message inside that conversation
-//! let _msg = diesel::insert_into(crate::schema::messages::table)
-//!     .values(&Message {
-//!         id: None,
-//!         role: "user".into(),
-//!         content: "Hello there".into(),
-//!         dynamic: true,
-//!         conversation_id: convo.id,
-//!     })
-//!     .returning(Message::as_returning())
-//!     .get_result(&mut conn)?;
-//! # Ok::<(), Box<dyn std::error::Error>>(())
-//! ```
+/// ```no_run
+/// use diesel::prelude::*;
+/// use awful_aj::schema::{conversations, messages};
+/// use awful_aj::models::{Conversation, Message};
+///
+/// # fn demo(conn: &mut SqliteConnection) -> Result<(), Box<dyn std::error::Error>> {
+/// let convo: Conversation = diesel::insert_into(conversations::table)
+///     .values(&Conversation { id: None, session_name: "demo".into() })
+///     .returning(Conversation::as_returning())
+///     .get_result(conn)?;
+///
+/// let _msg: Message = diesel::insert_into(messages::table)
+///     .values(&Message{ id: None, role: "user".into(), content: "Hi".into(), dynamic: false, conversation_id: convo.id })
+///     .returning(Message::as_returning())
+///     .get_result(conn)?;
+/// # Ok(()) }
+/// ```
 use diesel::prelude::*;
 
 /// Snapshot of runtime settings linked to a [`Conversation`].

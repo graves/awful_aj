@@ -175,16 +175,13 @@ fn link_dir(src: &Path, dst: &Path) -> io::Result<()> {
 ///   `windows-junction` feature is **not** used).
 ///
 /// # Examples
-/// ```rust
-/// use std::path::PathBuf;
-///
-/// // Use default resolution and create a CWD link if possible
-/// let model = awful_aj::ensure_all_mini_present(None, false).expect("model present");
-/// println!("model at {}", model.display());
-///
-/// // Respect an explicit override and do NOT create a CWD link
-/// let override_dir = PathBuf::from("/opt/models/all-mini-lm-l12-v2");
-/// let model = awful_aj::ensure_all_mini_present(Some(override_dir), true).expect("found");
+/// ```no_run
+/// // Prefer an existing model directory, or fall back to config_dir();
+/// let chosen = awful_aj::ensure_all_mini_present(
+///     std::env::var_os("AWFUL_AJ_BERT_DIR").map(std::path::PathBuf::from),
+///     /* no_cwd_link: */ true,
+/// ).expect("model path must be available");
+/// eprintln!("using model at {}", chosen.display());
 /// ```
 pub fn ensure_all_mini_present(
     cli_override: Option<PathBuf>,

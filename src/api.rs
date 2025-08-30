@@ -32,19 +32,41 @@
 //!   on stdout with lightweight color formatting, and the final assistant message is returned.
 //! - Otherwise [`fetch_response`] is used to perform a single request/response.
 //!
-//! ## Example
-//! ```no_run
-//! use awful_aj::api::ask;
-//! use awful_aj::config::AwfulJadeConfig;
-//! use awful_aj::template::ChatTemplate;
-//!
-//! # async fn demo(cfg: AwfulJadeConfig, tpl: ChatTemplate) -> anyhow::Result<()> {
-//! let answer = ask(&cfg, "What is the meaning of life?".into(), &tpl, None, None).await?;
-//! println!("assistant said: {answer}");
-//! # Ok(())
-//! # }
-//! ```
-
+/// # Example
+///
+/// ```no_run
+/// use awful_aj::api;
+/// use awful_aj::config::AwfulJadeConfig;
+/// use awful_aj::template::ChatTemplate;
+///
+/// # fn demo() -> Result<(), Box<dyn std::error::Error>> {
+/// let cfg = AwfulJadeConfig {
+///     api_key: "KEY".into(),
+///     api_base: "http://localhost:5001/v1".into(),
+///     model: "gpt-4o-mini".into(),
+///     context_max_tokens: 8192,
+///     assistant_minimum_context_tokens: 2048,
+///     stop_words: vec![],
+///     session_db_url: "aj.db".into(),
+///     session_name: None,
+///     should_stream: Some(false),
+/// };
+///
+/// let tpl = ChatTemplate {
+///     system_prompt: "You are helpful.".into(),
+///     messages: vec![],
+///     response_format: None,
+///     pre_user_message_content: None,
+///     post_user_message_content: None,
+/// };
+///
+/// // Ask once (non-streaming):
+/// let rt = tokio::runtime::Runtime::new().unwrap();
+/// rt.block_on(async {
+///     let _ = api::ask(&cfg, "Hello".into(), &tpl, None, None).await.unwrap();
+/// });
+/// # Ok(()) }
+/// ```
 use crate::{
     brain::{Brain, Memory},
     config::{AwfulJadeConfig, establish_connection},
@@ -88,11 +110,21 @@ use tracing::{debug, error};
 /// # Errors
 /// Returns an error if client initialization fails (unlikely unless invalid config).
 ///
-/// # Example
 /// ```no_run
-/// # use awful_aj::config::AwfulJadeConfig;
-/// # async fn demo(cfg: AwfulJadeConfig) -> anyhow::Result<()> {
-/// let client = awful_aj::api::tests::create_client_for_docs(&cfg)?; // internal helper in tests
+/// use awful_aj::config::AwfulJadeConfig;
+/// # fn demo() -> Result<(), Box<dyn std::error::Error>> {
+/// let cfg = AwfulJadeConfig {
+///     api_key: "KEY".into(),
+///     api_base: "http://localhost:5001/v1".into(),
+///     model: "gpt-4o-mini".into(),
+///     context_max_tokens: 8192,
+///     assistant_minimum_context_tokens: 2048,
+///     stop_words: vec![],
+///     session_db_url: "aj.db".into(),
+///     session_name: None,
+///     should_stream: Some(false),
+/// };
+/// let client = awful_aj::api::create_client(&cfg).unwrap();
 /// # Ok(()) }
 /// ```
 pub fn create_client(config: &AwfulJadeConfig) -> Result<Client<OpenAIConfig>, Box<dyn Error>> {
@@ -414,7 +446,7 @@ use crate::api::ChatCompletionRequestAssistantMessageContent::Text;
 /// # Example
 /// ```no_run
 /// # async fn demo(cfg: awful_aj::config::AwfulJadeConfig, tpl: awful_aj::template::ChatTemplate)
-/// # -> anyhow::Result<()> {
+/// # -> Result<(), Box<dyn std::error::Error>> {
 /// let answer = awful_aj::api::ask(&cfg, "Ping?".into(), &tpl, None, None).await?;
 /// println!("assistant: {answer}");
 /// # Ok(()) }

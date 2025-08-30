@@ -31,15 +31,30 @@
 //! should_stream: true
 //! ```
 //!
-//! ## Examples
-//! Load from disk, then ensure there is a DB conversation bound to a session:
-//! ```no_run
-//! use awful_aj::config::{AwfulJadeConfig, load_config};
-//!
-//! let mut cfg: AwfulJadeConfig = load_config("/path/to/config.yaml")?;
-//! cfg.ensure_conversation_and_config("my-session-name").await?;
-//! # Ok::<(), Box<dyn std::error::Error>>(())
-//! ```
+/// # Examples
+///
+/// ```no_run
+/// use awful_aj::config::AwfulJadeConfig;
+///
+/// // Minimal config just for illustration:
+/// let mut cfg = AwfulJadeConfig {
+///     api_key: "KEY".into(),
+///     api_base: "http://localhost:5001/v1".into(),
+///     model: "gpt-4o".into(),
+///     context_max_tokens: 8192,
+///     assistant_minimum_context_tokens: 2048,
+///     stop_words: vec![],
+///     session_db_url: "aj.db".into(),
+///     session_name: None,
+///     should_stream: Some(false),
+/// };
+///
+/// // Drive the async call from a tiny runtime inside the doctest:
+/// let rt = tokio::runtime::Runtime::new().unwrap();
+/// rt.block_on(async {
+///     cfg.ensure_conversation_and_config("my-session-name").await.unwrap();
+/// });
+/// ```
 use crate::models::*;
 use diesel::prelude::*;
 
