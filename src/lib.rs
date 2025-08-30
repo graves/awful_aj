@@ -14,8 +14,8 @@
 //!   `./all-mini-lm-l12-v2` without bundling the model into the crate (which would break
 //!   crates.io size limits).
 //!
-//! ## Model layout & discovery
-//! By default, the model is expected under your per-platform config directory, e.g.:
+//! ## Embedding model layout & discovery
+//! By default, the BERT sentence embedding model is expected under your per-platform config directory, e.g.:
 //!
 //! - macOS: `~/Library/Application Support/com.awful-sec.aj/all-mini-lm-l12-v2`  
 //! - Linux (XDG): `~/.config/aj/all-mini-lm-l12-v2`

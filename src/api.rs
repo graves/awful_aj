@@ -95,7 +95,7 @@ use tracing::{debug, error};
 /// let client = awful_aj::api::tests::create_client_for_docs(&cfg)?; // internal helper in tests
 /// # Ok(()) }
 /// ```
-fn create_client(config: &AwfulJadeConfig) -> Result<Client<OpenAIConfig>, Box<dyn Error>> {
+pub fn create_client(config: &AwfulJadeConfig) -> Result<Client<OpenAIConfig>, Box<dyn Error>> {
     let openai_config = OpenAIConfig::new()
         .with_api_key(config.api_key.clone())
         .with_api_base(config.api_base.clone());
@@ -130,7 +130,7 @@ fn create_client(config: &AwfulJadeConfig) -> Result<Client<OpenAIConfig>, Box<d
 /// # Panics
 /// - Will `unwrap()` when writing to the locked stdout (operationally safe in TTYs).
 #[allow(deprecated)]
-async fn stream_response<'a>(
+pub async fn stream_response<'a>(
     client: &Client<OpenAIConfig>,
     model: String,
     session_messages: &mut SessionMessages,
@@ -269,7 +269,7 @@ async fn stream_response<'a>(
 /// # Errors
 /// Propagates API, I/O, embedding, and index-build errors.
 #[allow(clippy::collapsible_match, deprecated)]
-async fn fetch_response<'a>(
+pub async fn fetch_response<'a>(
     client: &Client<OpenAIConfig>,
     model: String,
     session_messages: &mut SessionMessages,
@@ -508,7 +508,7 @@ pub async fn ask<'a>(
 ///
 /// # Errors
 /// Returns DB/serialization errors when loading or persisting messages.
-fn get_session_messages(
+pub fn get_session_messages(
     brain: &Option<&mut Brain>,
     config: &AwfulJadeConfig,
     template: &ChatTemplate,
@@ -572,7 +572,7 @@ fn get_session_messages(
 ///
 /// # Errors
 /// Embedding/search errors, and preamble build errors (unlikely).
-fn add_memories_to_brain(
+pub fn add_memories_to_brain(
     vector_store: &Option<&mut VectorStore>,
     question: &str,
     session_messages: &mut SessionMessages,
@@ -617,7 +617,7 @@ fn add_memories_to_brain(
 ///
 /// # Errors
 /// Returns formatting/serialization errors (rare).
-fn prepare_messages(
+pub fn prepare_messages(
     template: &ChatTemplate,
     config: &AwfulJadeConfig,
     brain: Option<&&mut Brain>,
@@ -675,7 +675,7 @@ use diesel::prelude::*;
 ///
 /// # Errors
 /// Returns DB errors when querying/persisting messages.
-fn prepare_messages_for_existing_session(
+pub fn prepare_messages_for_existing_session(
     template: &ChatTemplate,
     config: &AwfulJadeConfig,
     brain: &&mut Brain,

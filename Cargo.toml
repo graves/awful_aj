@@ -62,7 +62,7 @@ tiktoken-rs = { version = "0.7.0", features = ["async-openai"] }
 hora = "0.1.1"
 
 # NLP stack — make optional so docs.rs doesn't pull tch/torch-sys
-rust-bert = { version = "0.23.0", optional = true }
+rust-bert = { version = "0.23.0", optional = true, git = "https://github.com/graves/rust-bert" }
 
 # Optional Windows junction support
 junction = { version = "1.0", optional = true }
