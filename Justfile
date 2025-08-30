@@ -45,6 +45,8 @@ preflight:
 #   just release major
 release level:
 	#!/usr/bin/env nu
+	$env.LIBTORCH = '/opt/homebrew/Caskroom/miniconda/base/pkgs/pytorch-2.4.0-py3.11_0/lib/python3.11/site-packages/torch'
+	$env.DYLD_LIBRARY_PATH = $"($env.LIBTORCH)/lib"
 	just ensure-clean
 	just ensure-cargo-edit
 
