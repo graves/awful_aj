@@ -8,8 +8,10 @@ license = "MIT"
 repository = "https://github.com/graves/awful_aj.git"
 readme = "README.md"
 homepage = "https://github.com/graves/awful_aj"
-keywords = ["openai", "gpt3", "cli", "api", "vectordb"]
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+keywords = ["openai", "chatgpt", "llm", "cli", "embeddings"]
+
+# Use the modern feature resolver
+resolver = "2"
 
 [[bin]]
 name = "aj"
@@ -19,34 +21,65 @@ path = "src/main.rs"
 path = "src/lib.rs"
 
 [dependencies]
+# HTTP / OpenAI
 async-openai = "0.28.1"
-chrono = "0.4.31"
+reqwest = { version = "0.11.22", features = ["blocking", "json"] }
+
+# CLI / terminal
 clap = { version = "4.4.6", features = ["derive", "color", "env"] }
 crossterm = "0.27.0"
-diesel = { version = "2.2.9", features = ["sqlite", "returning_clauses_for_sqlite_3_35"] }
-directories = "5.0.1"
-futures = "0.3.28"
-hora = "0.1.1"
-rusqlite = { version = "0.33.0", features = ["bundled"] }
+
+# 🔧 Force console to compile with std (unifies features for transitive deps like indicatif)
+# ‘std’ is the important switch; the others are common defaults that enable Style/Term APIs.
+console = { version = "0.16", default-features = false, features = ["std", "ansi-parsing", "unicode-width"] }
+
+# Data / time / utils
+chrono = "0.4.31"
 once_cell = "1.18.0"
 regex = "1.10.0"
-reqwest = { version = "0.11.22", features = ["blocking", "json"] }
-zip = "0.6"
-rust-bert = { version = "0.23.0", git = "https://github.com/graves/rust-bert" }
-serde = { version = "1.0.188", features = ["derive"]}
-serde_json = "1.0.107"
-serde_yaml = "0.9.25"
-tempfile = "3.8.0"
-tiktoken-rs = { version = "0.5.4", features = ["async-openai"] }
-tokio = { version = "1.33.0", features = ["full"] }
-tracing = "0.1.37"
-tracing-subscriber = "0.3.17"
 sha256 = "1.6.0"
 dirs = "5"
+directories = "5.0.1"
+futures = "0.3.28"
+tempfile = "3.8.0"
+zip = "0.6"
+
+# Logging
+tracing = "0.1.37"
+tracing-subscriber = "0.3.17"
+
+# Serialization
+serde = { version = "1.0.188", features = ["derive"] }
+serde_json = "1.0.107"
+serde_yaml = "0.9.25"
+
+# DB
+diesel = { version = "2.2.9", features = ["sqlite", "returning_clauses_for_sqlite_3_35"] }
+rusqlite = { version = "0.33.0", features = ["bundled"] }
+
+# Tokenization
+tiktoken-rs = { version = "0.5.4", features = ["async-openai"] }
+
+# ANN index
+hora = "0.1.1"
+
+# NLP stack — crates.io rust-bert so docs.rs can skip native LibTorch
+rust-bert = "0.23.0"
+
+# Optional Windows junction support
 junction = { version = "1.0", optional = true }
+
+# Async runtime
+tokio = { version = "1.33.0", features = ["full"] }
 
 [dev-dependencies]
 httpmock = "0.6.8"
 
 [features]
 windows-junction = ["junction"]
+
+[package.metadata.docs.rs]
+# Let docs.rs build with its cfg; tch/torch-sys detect DOCS_RS and skip LibTorch.
+all-features = false
+no-default-features = false
+rustdoc-args = ["--cfg", "docsrs"]
