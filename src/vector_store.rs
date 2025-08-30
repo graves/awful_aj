@@ -42,6 +42,7 @@ use hora::core::metrics::Metric;
 use hora::index::hnsw_idx::HNSWIndex;
 use hora::index::hnsw_params::HNSWParams;
 use regex::Regex;
+#[cfg(feature = "embed-rust-bert")]
 use rust_bert::pipelines::sentence_embeddings::{
     SentenceEmbeddingsBuilder, SentenceEmbeddingsModel,
 };
@@ -523,3 +524,36 @@ mod tests {
         Ok(())
     }
 }
+
+#[cfg(feature = "embed-stub")]
+mod doc_stub {
+    pub struct SentenceEmbeddingsModel;
+    impl SentenceEmbeddingsModel {
+        pub fn encode(
+            &self,
+            inputs: &[String],
+        ) -> Result<Vec<Vec<f32>>, Box<dyn std::error::Error>> {
+            Ok(inputs
+                .iter()
+                .map(|s| {
+                    let mut v = vec![0.0f32; 384];
+                    for (i, b) in s.as_bytes().iter().enumerate() {
+                        v[i % 384] += *b as f32 / 255.0;
+                    }
+                    v
+                })
+                .collect())
+        }
+    }
+    pub struct SentenceEmbeddingsBuilder;
+    impl SentenceEmbeddingsBuilder {
+        pub fn local(_path: impl AsRef<std::path::Path>) -> Self {
+            Self
+        }
+        pub fn create_model(self) -> Result<SentenceEmbeddingsModel, Box<dyn std::error::Error>> {
+            Ok(SentenceEmbeddingsModel)
+        }
+    }
+}
+#[cfg(feature = "embed-stub")]
+use doc_stub::{SentenceEmbeddingsBuilder, SentenceEmbeddingsModel};

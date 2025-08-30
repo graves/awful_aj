@@ -578,7 +578,7 @@ fn add_memories_to_brain(
     session_messages: &mut SessionMessages,
     brain: &mut Option<&mut Brain>,
 ) -> Result<(), Box<dyn Error>> {
-    if let Some(ref vector_store) = vector_store {
+    if let Some(vector_store) = vector_store {
         // Embed the user's input
         let vector = vector_store.embed_text_to_vector(question)?;
 
@@ -592,7 +592,7 @@ fn add_memories_to_brain(
 
         for (_vector, id, euclidean_distance) in neighbor_vec_distances {
             if let Some(neighbor_content) = vector_store.get_content_by_id(id.unwrap()) {
-                if let Some(ref mut brain) = brain {
+                if let Some(brain) = brain {
                     if euclidean_distance < 1.0 {
                         brain.add_memory((*neighbor_content).clone(), session_messages);
                     }
@@ -600,7 +600,7 @@ fn add_memories_to_brain(
             }
         }
 
-        if let Some(ref mut brain) = brain {
+        if let Some(brain) = brain {
             session_messages.preamble_messages = brain.build_preamble().unwrap();
         }
     }
@@ -942,7 +942,7 @@ pub async fn interactive_mode<'a>(
                     let _diesel_sqlite_response = session_messages
                         .insert_message("assistant".to_string(), assistant_message_content.clone());
 
-                    env::set_var("AJ", assistant_message_content);
+                    unsafe { env::set_var("AJ", assistant_message_content) };
                 }
             }
             _ => (),
