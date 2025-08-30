@@ -44,6 +44,7 @@ preflight:
 #   just release minor
 #   just release major
 release level:
+	#!/usr/bin/env nu
 	just ensure-clean
 	just ensure-cargo-edit
 
