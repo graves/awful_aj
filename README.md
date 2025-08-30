@@ -12,8 +12,6 @@ all without leaving your terminal.
 
 It’s built in Rust for speed, safety, and peace of mind. 🦀
 
-![Awful Jade CLI tool logo](aj.jpeg)
-
 ---
 
 ```
@@ -32,6 +30,10 @@ Options:
   -h, --help     Print help
   -V, --version  Print version
 ```
+
+---
+
+![Awful Jade CLI tool logo](aj.jpeg)
 
 ---
 
