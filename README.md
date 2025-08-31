@@ -1,4 +1,4 @@
-# Awful Jade (aj) 🐍🧠
+# Awful Jade (`aj`) 🌲
 
 [![Crates.io](https://img.shields.io/crates/v/awful_aj.svg)](https://crates.io/crates/awful_aj)
 [![Docs.rs](https://docs.rs/awful_aj/badge.svg)](https://docs.rs/awful_aj)
