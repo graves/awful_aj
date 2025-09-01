@@ -1,5 +1,7 @@
+.DS_Store
 /target
 aj.db
 all-mini-lm-l12-v2.zip
 all-mini-lm-l12-v2/
 all-mini-lm-l12-v2
+docs/book/

@@ -1,0 +1,5 @@
+[book]
+authors = ["Thomas Gentry"]
+language = "en"
+src = "src"
+title = "Awful Jade"
