@@ -1,6 +1,18 @@
 # Awful Jade (`aj`) 🌲
 
-Your command‑line sidekick is your command-line sidekick for working with Large Language Models (LLMs) — fast, friendly, and a dependable. 🦀💬
+`aj` is your command-line sidekick for working with Large Language Models (LLMs) — fast, friendly, and a dependable. 🦀💬
+
+![aj CLI Example](./use/aj_interactive.gif)
+
+---
+
+## 🌐 Project Links
+
+- [**GitHub Repository** 🐙](https://github.com/graves/awful_aj) — Open source code, issues, and contributions welcome.  
+- [**Docs.rs Documentation** 📖](https://docs.rs/awful_aj) — Full API reference, kept in sync with crate releases.  
+- [**Crates.io Package** 📦](https://crates.io/crates/awful_aj) — Install instructions, versions, and metadata.  
+
+---
 
 > _LLM Swiss Army knife with the best intentions._ 😇
 

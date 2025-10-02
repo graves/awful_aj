@@ -7,8 +7,7 @@
 
 Think of it as an _LLM Swiss Army knife with the best intentions_ 😇.
 
-> Ask questions, run interactive sessions, sanitize messy OCR book dumps, synthesize exam questions…  
-all without leaving your terminal.
+> Ask questions, run interactive sessions, sanitize messy OCR book dumps, synthesize exam questions, all without leaving your terminal.
 
 It’s built in Rust for speed, safety, and peace of mind. 🦀
 
@@ -56,7 +55,7 @@ From [crates.io](https://crates.io/crates/awful_aj):
 cargo install awful_aj
 ```
 
-This gives you the aj binary.
+This gives you the `aj` binary.
 
 Requirements:
 - Rust (use rustup if you don’t have it).
@@ -88,7 +87,7 @@ conda activate aj
 3. Install pytorch 2.4.0
 
 ```bash
-pip install torch==2.4.0 --index-url https://download.pytorch.org/whl/cp
+pip install torch==2.4.0
 ````
 
 4. Add the following to your shell initialization.
@@ -97,8 +96,6 @@ pip install torch==2.4.0 --index-url https://download.pytorch.org/whl/cp
 export LIBTORCH_USE_PYTORCH=1
 export LIBTORCH='/opt/homebrew/Caskroom/miniconda/base/pkgs/pytorch-2.4.0-py3.11_0/lib/python3.11/site-packages/torch' # Or wherever Conda installed libtorch on your OS
 export DYLD_LIBRARY_PATH="$LIBTORCH/lib"
-
-conda activate aj
 ```
 
 ---
@@ -183,11 +180,11 @@ Add more, swap them in with --template <name>.
 ---
 
 ## 🧠 How it Works
-- Brain: Keeps memories in a deque, trims when it gets too wordy.
-- VectorStore: Embeds your inputs using all-mini-lm-l12-v2, saves to HNSW index.
-- Config: YAML-based, sane defaults, easy to tweak.
-- Templates: Prompt engineering without copy-pasting into your terminal like a caveman.
-- Ensure All Mini: If the BERT model’s not there, AJ fetches it automagically.
+- **Brain**: Keeps memories in a deque, trims when it gets too wordy.
+- **VectorStore**: Embeds your inputs using all-mini-lm-l12-v2, saves to HNSW index.
+- **Config**: YAML-based, sane defaults, easy to tweak.
+- **Templates**: Prompt engineering without copy-pasting into your terminal like a caveman.
+- **Ensure All Mini**: If the BERT model’s not there, AJ fetches it automagically.
 
 ---
 

@@ -19,3 +19,4 @@
 - [Sessions](sessions.md)
 - [Memories](memories.md)
 - [Downstream Projects](downstream-projects.md)
+- [Moldable Outputs](moldable-outputs.md)

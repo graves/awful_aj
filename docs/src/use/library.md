@@ -102,7 +102,7 @@ let mut cfg = /* ... as above ... */ AwfulJadeConfig {
 let tpl = /* ... */;
 ```
 
-📝 Note: The streaming printer uses [crossterm](https://github.com/crossterm-rs/crossterm) for color + attributes. It writes to the locked stdout and resets formatting at the end.
+> 📝 Note: The streaming printer uses [crossterm](https://github.com/crossterm-rs/crossterm) for color + attributes. It writes to the locked stdout and resets formatting at the end.
 
 ## 🧵 Sessions: Persistent Conversations (with Optional Memory)
 
@@ -158,7 +158,7 @@ Session details 🗂️
 - On overflow, the oldest pair is ejected and (if a VectorStore is provided) embedded + persisted; the HNSW index is rebuilt.
 - On each call, the assistant reply is persisted to the session DB.
 
-💡 You control the budget with `context_max_tokens` and the preamble budget with `assistant_minimum_context_tokens` (used by the brain/preamble logic).
+> 💡 You control the budget with `context_max_tokens` and the preamble budget with `assistant_minimum_context_tokens` (used by the brain/preamble logic).
 
 ## 🧠 Adding Memories (Vector Search Assist)
 
@@ -235,7 +235,7 @@ What `add_memories_to_brain` does 🔍
 3.	For neighbors with distance < 1.0, injects their content into the brain.
 4.	Rebuilds the preamble so these memories ship with the request.
 
-📏 Threshold and k are implementation details you can tune inside your VectorStore module if you hack on `awful_aj`.
+> 📏 Threshold and k are implementation details you can tune inside your VectorStore module if you hack on `awful_aj`.
 
 ## 🧪 Templates: Powerful Knobs (System, Seeds, & Post-Processing)
 
@@ -245,7 +245,7 @@ What `add_memories_to_brain` does 🔍
 - `pre_user_message_content` / `post_user_message_content`: Lightweight way to wrap inputs (e.g., “Answer concisely.” / “Return JSON.”).
 - `response_format`: If present, it’s forwarded as a JSON Schema so that if your model supports Tool Calling or Structured Output the inference will only emit structured output. 🧩
 
-🧰 For structured outputs, define the schema object your server expects and place it in `template.response_format`. For example:
+> 🧰 For structured outputs, define the schema object your server expects and place it in `template.response_format`. For example:
 
 ```json
 {
@@ -271,7 +271,7 @@ You can skip `api::ask` and call the lower-level primitives if you need full con
 
 These expect a `Client`, a `SessionMessages` you’ve prepared, and your `AwfulJadeConfig` + `ChatTemplate`. They return the final assistant message object (you extract its text from `AssistantMessageContent::Text`).
 
-⚠️ This is expert-mode: you manage session assembly (`prepare_messages*`) and persistence yourself.
+> ⚠️ This is expert-mode: you manage session assembly (`prepare_messages*`) and persistence yourself.
 
 ## 🎨 Creative Patterns (Recipes!)
 
@@ -341,7 +341,7 @@ Have your template include a JSON schema (set `response_format`) so responses ar
 - Memory (`VectorStore` + `Brain`) → ejected pairs get embedded; nearest neighbors (`< 1.0`) are injected into the preamble next time.
 - Modes → streaming (`should_stream: true`) vs non-streaming (`false/None`).
 
-You choose how many of those dials to turn. 🎛️😄
+> You choose how many of those dials to turn. 🎛️😄
 
 ## ✅ Checklist for Production
 - Pin crate versions.
@@ -350,7 +350,5 @@ You choose how many of those dials to turn. 🎛️😄
 - If you want long-term recall, wire a `VectorStore` and a `Brain`.
 - Establish sensible stop words and token budgets.
 - Consider a JSON schema when you need structured output.
-
----
 
 > Happy hacking! 🧩🧠✨

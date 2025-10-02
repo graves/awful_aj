@@ -22,7 +22,7 @@ conda activate aj
 
 ### 2. Install PyTorch 2.4.0 🧱
 ```shell
-pip install torch==2.4.0 --index-url https://download.pytorch.org/whl/cp
+pip install torch==2.4.0
 ```
 
 ### 3. Environment setup 🌿

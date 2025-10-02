@@ -149,7 +149,13 @@ async fn run() -> Result<(), Box<dyn Error>> {
 
             let config_path = determine_config_path()?;
 
-            let mut jade_config = config::load_config(config_path.to_str().unwrap())?;
+            let config_str = config_path.to_str().ok_or_else(|| {
+                format!("Invalid UTF-8 in config path: {}", config_path.display())
+            })?;
+
+            let mut jade_config = config::load_config(config_str).map_err(|e| {
+                format!("Failed to load config at {}: {}", config_path.display(), e)
+            })?;
 
             if session.is_some() {
                 jade_config
