@@ -175,7 +175,7 @@ system_prompt: "You are Awful Jade, a helpful AI assistant programmed by Awful S
 messages: []
 ```
 
-Add more, swap them in with --template <name>.
+Add more, swap them in with `--template <name>`.
 
 ---
 
