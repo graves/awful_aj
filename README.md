@@ -136,7 +136,7 @@ aj interactive
 ```
 
 Supports memory via the vector store, so it won’t immediately forget your name.
-(Unlike your barista.)
+_(Unlike your barista.)_
 
 ---
 
