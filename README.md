@@ -125,6 +125,8 @@ aj ask "Is Bibi really from Philly?"
 
 You’ll get a colorful, model-dependent answer.
 
+![aj ask command](./bibi.gif)
+
 ---
 
 3. Interactive Mode
@@ -137,6 +139,8 @@ aj interactive
 
 Supports memory via the vector store, so it won’t immediately forget your name.
 _(Unlike your barista.)_
+
+![aj interactive command](./interactive.gif)
 
 ---
 
