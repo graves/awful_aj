@@ -85,7 +85,7 @@ pub struct AwfulJadeConfig {
     pub model: String,
 
     /// Maximum tokens for a single model response. Used to cap completions.
-    pub context_max_tokens: u16,
+    pub context_max_tokens: usize,
 
     /// A minimum context that should remain available for the assistant
     /// (used by higher-level logic to budget prompt vs. reply).
@@ -236,7 +236,7 @@ impl PartialEq<AwfulJadeConfig> for AwfulConfig {
         self.api_base == other.api_base
             && self.api_key == other.api_key
             && self.model == other.model
-            && self.context_max_tokens as u16 == other.context_max_tokens
+            && self.context_max_tokens as usize == other.context_max_tokens
             && self.assistant_minimum_context_tokens == other.assistant_minimum_context_tokens
     }
 }

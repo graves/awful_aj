@@ -448,7 +448,7 @@ impl SessionMessages {
     pub fn tokens_left_before_ejection(&self, messages: Vec<Message>) -> isize {
         let bpe = cl100k_base().unwrap();
         let max_tokens =
-            (self.config.context_max_tokens as i32) - self.config.assistant_minimum_context_tokens;
+            (self.config.context_max_tokens as isize) - (self.config.assistant_minimum_context_tokens as isize);
 
         let premable_tokens =
             Self::count_tokens_in_chat_completion_messages(&self.preamble_messages);
@@ -471,8 +471,7 @@ impl SessionMessages {
     /// # Returns
     /// The token budget as `isize`.
     pub fn max_tokens(&self) -> isize {
-        ((self.config.context_max_tokens as i32) - self.config.assistant_minimum_context_tokens)
-            as isize
+        (self.config.context_max_tokens as isize) - (self.config.assistant_minimum_context_tokens as isize)
     }
 
     /// Should we eject old messages right now?
