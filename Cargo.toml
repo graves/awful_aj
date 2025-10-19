@@ -1,6 +1,6 @@
 [package]
 name = "awful_aj"
-version = "0.3.9"
+version = "0.3.8"
 edition = "2024"
 authors = ["Thomas Gentry <thomas@awfulsec.com>"]
 description = "A CLI for interacting with OpenAI compatible APIs"
@@ -9,9 +9,18 @@ repository = "https://github.com/graves/awful_aj.git"
 readme = "README.md"
 homepage = "https://github.com/graves/awful_aj"
 keywords = ["openai", "chatgpt", "llm", "cli", "embeddings"]
-
 # Use the modern feature resolver
 resolver = "2"
+include = [
+  "Cargo.toml",
+  "README.md",
+  "LICENSE*",
+  "src/**",
+  # Only ship tiny, essential templates (or remove if not needed at runtime)
+  "templates/*.yaml",
+  # If your library needs migrations at runtime, keep them:
+  # "migrations/*.sql",
+]
 
 [[bin]]
 name = "aj"
