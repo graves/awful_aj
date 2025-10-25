@@ -194,13 +194,15 @@ impl AwfulJadeConfig {
 /// Load configuration from a YAML file on disk.
 ///
 /// This is a thin convenience wrapper over `fs::read_to_string` + `serde_yaml::from_str`.
+/// If the `session_db_url` is empty or invalid, it will be set to the default location
+/// in the config directory.
 ///
 /// # Parameters
 /// - `file`: Path to a YAML config file.
 ///
 /// # Returns
 /// - `Ok(AwfulJadeConfig)` on success.
-/// - `Err(..)` if the file can’t be read or cannot be parsed as valid YAML.
+/// - `Err(..)` if the file can't be read or cannot be parsed as valid YAML.
 ///
 /// # Examples
 /// ```no_run
@@ -212,7 +214,16 @@ impl AwfulJadeConfig {
 /// ```
 pub fn load_config(file: &str) -> Result<AwfulJadeConfig, Box<dyn Error>> {
     let content = fs::read_to_string(file)?;
-    let config: AwfulJadeConfig = serde_yaml::from_str(&content)?;
+    let mut config: AwfulJadeConfig = serde_yaml::from_str(&content)?;
+    
+    // Validate and normalize the database path
+    if config.session_db_url.trim().is_empty() {
+        warn!("session_db_url is empty, using default path in config directory");
+        let default_db_path = crate::config_dir()?.join("aj.db");
+        config.session_db_url = default_db_path.to_string_lossy().to_string();
+        info!("Database path set to: {}", config.session_db_url);
+    }
+    
     Ok(config)
 }
 

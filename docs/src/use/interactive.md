@@ -9,9 +9,14 @@ aj interactive
 ![aj interactive cli example](./aj_interactive.gif)
 
 ## 🧠 Features
-Remembers salient turns via [HNSW](https://github.com/rust-cv/hnsw) + [sentence embeddings](https://github.com/guillaume-be/rust-bert).
+Remembers salient turns via [HNSW](https://github.com/rust-cv/hnsw) + sentence embeddings (using [Candle](https://github.com/huggingface/candle) for pure Rust ML).
 - Limits total tokens to your configured quota (oldest context trimmed)
 - Supports templates and system prompts
+
+## 🎨 Output Colors
+- Your input appears in **blue**
+- Assistant responses appear in **yellow**
+- Model reasoning (in `<think>` tags) appears in **dark gray**
 
 ## 💡 Pro Tips
 - `aj interactive` expects an ASCII escape code to send your message. On macOS that's `Ctrl-d`.

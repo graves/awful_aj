@@ -4,9 +4,9 @@
 //!
 //! The CLI exposes three subcommands:
 //!
-//! - [`ask`](Commands::Ask): Ask a single question and print the model’s answer.
+//! - [`ask`](Commands::Ask): Ask a single question and print the model's answer.
 //! - [`interactive`](Commands::Interactive): Start a live REPL-style chat session.
-//! - [`init`](Commands::Init): Create default config and template files under the app’s
+//! - [`init`](Commands::Init): Create default config and template files under the app's
 //!   platform-specific config directory.
 //!
 //! ## Quick examples
@@ -16,7 +16,7 @@
 //! use awful_aj::commands::Cli;
 //! use clap::Parser;
 //! let cli = Cli::parse();
-//! // hand off to your app’s dispatcher
+//! // hand off to your app's dispatcher
 //! ```
 //!
 //! **Ask with a specific template and session**
@@ -24,26 +24,12 @@
 //! aj ask -t simple_question -s default "What is HNSW?"
 //! ```
 //!
-//! **Interactive mode with an explicit model directory**
+//! **Interactive mode**
 //! ```text
-//! aj interactive --model-dir /opt/models/all-mini-lm-l12-v2
-//! ```
-//!
-//! **Skip creating a symlink in the current directory**
-//! ```text
-//! aj ask --no-cwd-link "hello"
-//! ```
-//!
-//! **Provide model directory via environment variable**
-//! ```text
-//! AWFUL_AJ_BERT_DIR=/opt/models/all-mini-lm-l12-v2 aj interactive
+//! aj interactive
 //! ```
 //!
 //! ## Notes
-//! - `--model-dir` (or `AWFUL_AJ_BERT_DIR`) points to the **folder** containing the
-//!   sentence-embedding model (`all-mini-lm-l12-v2`). If not provided, the application
-//!   will fall back to the config directory location and may create a symlink/junction
-//!   in the current working directory unless `--no-cwd-link` is used.
 //! - Colors are enabled by default in help output (see `ColorChoice::Always`).
 
 use clap::{Parser, Subcommand};
@@ -69,11 +55,11 @@ pub struct Cli {
 
 /// All supported subcommands.
 ///
-/// See each variant’s field docs for the available options.
+/// See each variant's field docs for the available options.
 #[derive(Subcommand, Debug)]
 #[command(about, long_about = None, color = clap::ColorChoice::Always)]
 pub enum Commands {
-    /// Ask a single question and print the assistant’s response.
+    /// Ask a single question and print the assistant's response.
     ///
     /// If no `question` is provided, the application supplies a default prompt.
     ///
@@ -85,7 +71,7 @@ pub enum Commands {
 
         /// Name of the chat template to load (e.g., `simple_question`).
         ///
-        /// Templates live under the app’s config directory, usually at:
+        /// Templates live under the app's config directory, usually at:
         /// - macOS: `~/Library/Application Support/com.awful-sec.aj/templates/`
         /// - Linux: `~/.config/aj/templates/`
         /// - Windows: `%APPDATA%\\com.awful-sec\\aj\\templates\\`
@@ -98,20 +84,13 @@ pub enum Commands {
         #[arg(name = "session", short = 's')]
         session: Option<String>,
 
-        /// Filesystem path to the **all-mini-lm-l12-v2** directory.
+        /// Force one-shot mode, ignoring any session configured in config.yaml.
         ///
-        /// Overrides the default lookup in the config directory.
-        ///
-        /// Can also be set via `AWFUL_AJ_BERT_DIR`.
-        #[arg(long, env = "AWFUL_AJ_BERT_DIR")]
-        model_dir: Option<std::path::PathBuf>,
-
-        /// Do **not** create `./all-mini-lm-l12-v2` symlink/junction in the current directory.
-        ///
-        /// By default the app may create a convenient link in the CWD pointing to the
-        /// real model directory. Use this flag to suppress that behavior.
+        /// When this flag is set, the prompt will be treated as standalone
+        /// with no memory or session tracking, even if a session_name is
+        /// configured in the config file.
         #[arg(long)]
-        no_cwd_link: bool,
+        one_shot: bool,
     },
 
     /// Start an interactive REPL-style conversation.
@@ -129,22 +108,26 @@ pub enum Commands {
         /// Session name for the conversation.
         #[arg(name = "session", short = 's')]
         session: Option<String>,
-
-        /// Filesystem path to the **all-mini-lm-l12-v2** directory.
-        ///
-        /// Overrides the default lookup in the config directory.
-        ///
-        /// Can also be set via `AWFUL_AJ_BERT_DIR`.
-        #[arg(long, env = "AWFUL_AJ_BERT_DIR")]
-        model_dir: Option<std::path::PathBuf>,
-
-        /// Do **not** create `./all-mini-lm-l12-v2` symlink/junction in the current directory.
-        #[arg(long)]
-        no_cwd_link: bool,
     },
 
     /// Initialize configuration and default templates in the platform config directory.
     ///
-    /// Creates the config file and a minimal template set if they don’t exist yet.
-    Init,
+    /// Creates the config file and a minimal template set if they don't exist yet.
+    Init {
+        /// Overwrite existing files (config, templates, database).
+        ///
+        /// By default, init will skip files that already exist. Use this flag
+        /// to force overwriting all files.
+        #[arg(long)]
+        overwrite: bool,
+    },
+
+    /// Reset the database to a pristine state.
+    ///
+    /// This command drops all sessions, messages, and configurations from the database,
+    /// then recreates the schema. Use this to start fresh with a clean database.
+    ///
+    /// Aliases: `r`
+    #[clap(name = "reset", alias = "r")]
+    Reset,
 }

@@ -10,6 +10,7 @@
   - [Init](use/init.md)
   - [Ask](use/ask.md)
   - [Interactive](use/interactive.md)
+  - [Reset](use/reset.md)
   - [As a library](use/library.md)
 - [Config](config.md)
 - [Templates](templates/README.md)

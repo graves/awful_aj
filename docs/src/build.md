@@ -1,19 +1,19 @@
 # Build from Source 🧱
 
-Want to hack on `aj`? Let’s go! 🧑‍💻
+Want to hack on `aj`? Let's go! 🧑‍💻
 
 ## 🤢 Install dependencies
+
+All you need is Rust:
+
 ```shell
-brew install miniconda               # or use the official installer
-conda create -n aj python=3.11 -y
-conda activate aj
-pip install torch==2.4.0 --index-url https://download.pytorch.org/whl/cp
-export LIBTORCH_USE_PYTORCH=1
-export LIBTORCH="/opt/homebrew/Caskroom/miniconda/base/pkgs/pytorch-2.4.0-py3.11_0/lib/python3.11/site-packages/torch"
-export DYLD_LIBRARY_PATH="$LIBTORCH/lib"
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
+That's it! No Python, no conda, no PyTorch. Everything runs in pure Rust. 🦀
+
 ## 🛠️ Clone & Build
+
 ```shell
 git clone https://github.com/graves/awful_aj.git
 cd awful_aj
@@ -21,14 +21,37 @@ cargo build
 ```
 
 ## ✅ Run Tests
+
 ```shell
 cargo test
 ```
 
-> Tip: If you modify features that touch embeddings, ensure your Python + PyTorch environment is active before running commands that exercise memory/vector search.
+## 🚀 Run the Local Build
+
+```shell
+cargo run -- ask "Hello!"
+```
+
+Or build in release mode for better performance:
+
+```shell
+cargo build --release
+./target/release/aj ask "Hello!"
+```
+
+## 🤖 First Run with Embeddings
+
+The first time you use a feature requiring embeddings (like sessions with memory), Candle will automatically download the `all-MiniLM-L6-v2` model from HuggingFace Hub to your cache directory:
+
+- macOS: `~/.cache/huggingface/hub/`
+- Linux: `~/.cache/huggingface/hub/`
+- Windows: `C:\Users\YOU\AppData\Local\huggingface\hub\`
 
 ## 🧯 Common Troubleshooting
-- Linker/PyTorch libs not found: Recheck the `LIBTORCH` environment variable and your platform’s dynamic library path env var (`DYLD_LIBRARY_PATH` on macOS, `LD_LIBRARY_PATH` on Linux, `PATH` on Windows).
-- Model not downloading: 
-    - Ensure the config directory exists and is writable. See Config Paths on your OS's [Install](./install/mac_os.md) page.
-    - Check your network connection.
+
+- **Build errors**: Make sure you have the latest stable Rust: `rustup update stable`
+- **Model not downloading**: 
+    - Ensure your cache directory is writable
+    - Check your network connection
+    - The model is downloaded on-demand when first needed
+- **Database issues**: Run `aj reset` to recreate the database schema

@@ -31,7 +31,7 @@ path = "src/lib.rs"
 
 [dependencies]
 # HTTP / OpenAI
-async-openai = { version = "0.29.2", default-features = false, features = ["rustls"] }
+async-openai = { version = "0.30.1", default-features = false, features = ["rustls"] }
 reqwest = { version = "0.12.23", default-features = false, features = [
   "json",
   "http2",
@@ -54,7 +54,6 @@ dirs = "6.0.0"
 directories = "6.0.0"
 futures = "0.3.28"
 tempfile = "3.8.0"
-zip = "4.5.0"
 
 # Logging
 tracing = "0.1.37"
@@ -75,33 +74,19 @@ tiktoken-rs = { version = "0.7.0", default-features = false }
 # ANN index
 hora = "0.1.1"
 
-# NLP stack — make optional so docs.rs doesn't pull tch/torch-sys
-rust-bert = { version = "0.23.0", optional = true, git = "https://github.com/graves/rust-bert" }
+# Embeddings - Pure Rust ML framework
+candle-core = "0.9.1"
+candle-nn = "0.9.1"
+candle-transformers = "0.9.1"
+hf-hub = "0.4.3"
+tokenizers = "0.22.1"
 
-# Optional Windows junction support
-junction = { version = "1.0", optional = true }
 
 # Async runtime
-tokio = { version = "1.33.0", features = ["full"] }
+tokio = { version = "1.33.0", features = ["rt-multi-thread", "macros"] }
 
 [target.'cfg(windows)'.dependencies]
 console = { version = "0.16", default-features = true, features = ["std", "ansi-parsing", "unicode-width"] }
 
 [dev-dependencies]
 httpmock = "0.6.8"
-
-[features]
-# Default/local builds use the real rust-bert backend.
-default = ["embed-rust-bert"]
-embed-rust-bert = ["dep:rust-bert"]
-# Docs.rs (and anyone who wants a pure-Rust, no-native-deps build) can use the stub.
-embed-stub = []
-windows-junction = ["dep:junction"]
-
-[package.metadata.docs.rs]
-# Avoid default features so rust-bert/tch/torch-sys are NOT built on docs.rs.
-no-default-features = true
-# Build docs with the pure-Rust embedding stub.
-features = ["embed-stub"]
-# Keep the standard docs.rs cfg
-rustdoc-args = ["--cfg", "docsrs"]

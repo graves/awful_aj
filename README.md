@@ -9,7 +9,7 @@ Think of it as an _LLM Swiss Army knife with the best intentions_ 😇.
 
 > Ask questions, run interactive sessions, sanitize messy OCR book dumps, synthesize exam questions, all without leaving your terminal.
 
-It’s built in Rust for speed, safety, and peace of mind. 🦀
+It's built in Rust for speed, safety, and peace of mind. 🦀
 
 ---
 
@@ -20,9 +20,10 @@ Awful Jade – a CLI for local LLM tinkering with memories, templates, and vibes
 Usage: aj <COMMAND>
 
 Commands:
-  ask          Ask a single question and print the assistant’s response
+  ask          Ask a single question and print the assistant's response
   interactive  Start an interactive REPL-style conversation
   init         Initialize configuration and default templates in the platform config directory
+  reset        Reset the database to a pristine state
   help         Print this message or the help of the given subcommand(s)
 
 Options:
@@ -39,11 +40,12 @@ Options:
 ## ✨ Features
 
 - **Ask the AI**: Run `aj ask "question"` and get answers powered by your configured model.  
-- **Interactive Mode**: A REPL-style conversation with memory & vector search (your AI “remembers” past context).  
-- **Vector Store**: Uses HNSW + sentence embeddings to remember what you’ve said before. Basically, your AI gets a brain. 🧠  
+- **Interactive Mode**: A REPL-style conversation with memory & vector search (your AI "remembers" past context).  
+- **Vector Store**: Uses HNSW + sentence embeddings to remember what you've said before. Basically, your AI gets a brain. 🧠  
 - **Brains with Limits**: Keeps only as many tokens as you allow. When full, it forgets the oldest stuff. (Like you after 3 AM pizza.)  
 - **Config & Templates**: YAML-driven configs and prompt templates. Customize everything, break nothing.  
-- **Auto-downloads BERT embeddings model**: If the required `all-mini-lm-l12-v2` model isn’t around, `aj` will politely fetch and unzip it into your config dir.  
+- **Auto-downloads embeddings model**: Uses Candle (pure Rust ML framework) to automatically download the `all-MiniLM-L6-v2` BERT model from HuggingFace Hub when needed.  
+- **Pure Rust**: No Python dependencies! Everything runs in pure Rust using Candle for ML inference.
 
 ---
 
@@ -58,53 +60,28 @@ cargo install awful_aj
 This gives you the `aj` binary.
 
 Requirements:
-- Rust (use rustup if you don’t have it).
-- Diesel CLI if you want to reset or migrate the session DB.
-- Python 3.11 and pytorch 2.4.0.
+- Rust (use rustup if you don't have it).
   
-The BERT embeddings model (all-mini-lm-l12-v2) will be downloaded automatically into your platform’s config directory:
-- macOS: `~/Library/Application Support/com.awful-sec.aj/`
-- Linux: `~/.config/aj/`
-- Windows: `C:\Users\YOU\AppData\Roaming\awful-sec\aj/`
+The embeddings model (`all-MiniLM-L6-v2`) will be downloaded automatically from HuggingFace Hub to your system's cache directory when first needed. Models are cached using the `hf-hub` crate, typically at:
+- macOS: `~/.cache/huggingface/hub/`
+- Linux: `~/.cache/huggingface/hub/`
+- Windows: `C:\Users\YOU\AppData\Local\huggingface\hub\`
 
 ---
 
-## 👷🏽‍♀️ Setup (steps will vary according to your operating system)
+## 👷🏽‍♀️ Setup
 
-1. Install conda python version manager.
+No special setup required! Just install with `cargo install awful_aj` and you're ready to go.
 
-```bash
-brew install miniconda
-```
-
-2. Create Python 3.11 virtual environment named aj and activate it.
-
-```bash
-conda create -n aj python=3.11
-conda activate aj
-````
-
-3. Install pytorch 2.4.0
-
-```bash
-pip install torch==2.4.0
-````
-
-4. Add the following to your shell initialization.
-
-```bash
-export LIBTORCH_USE_PYTORCH=1
-export LIBTORCH='/opt/homebrew/Caskroom/miniconda/base/pkgs/pytorch-2.4.0-py3.11_0/lib/python3.11/site-packages/torch' # Or wherever Conda installed libtorch on your OS
-export DYLD_LIBRARY_PATH="$LIBTORCH/lib"
-```
+The embeddings model will be downloaded automatically from HuggingFace Hub the first time you use a feature that requires it.
 
 ---
 
 ## 🚀 Usage
 
-1. Initialize
+### 1. Initialize
 
-Create default configs and templates:
+Create default configs, templates, and database:
 
 ```
 aj init
@@ -113,38 +90,89 @@ aj init
 This will generate:
 - `config.yaml` with sensible defaults
 - `templates/default.yaml` and `templates/simple_question.yaml`
-- A SQLite database (`aj.db`) for sessions
+- A SQLite database (`aj.db`) for sessions in your config directory
+
+**Options:**
+- `--overwrite`: Force overwrite existing config, templates, and database files
+
+**Example:**
+```bash
+aj init --overwrite  # Reinitialize everything from scratch
+```
 
 ---
 
-2. Ask a Question
+### 2. Ask a Question
 
 ```
 aj ask "Is Bibi really from Philly?"
 ```
 
-You’ll get a colorful, model-dependent answer.
+You'll get a colorful, model-dependent answer in **yellow** (or **dark gray** if the model uses `<think>` tags for reasoning).
+
+**Options:**
+- `-t, --template <NAME>`: Use a specific template (e.g., `simple_question`)
+- `-s, --session <NAME>`: Save to a named session for context retention
+- `--one-shot`: Ignore any session configured in config.yaml (force standalone prompt)
+
+**Examples:**
+```bash
+aj ask "What is HNSW?"
+aj ask -t simple_question "Explain Rust lifetimes"
+aj ask -s my-session "Remember this: I like pizza"
+aj ask --one-shot "What's the weather?" # Ignores session from config
+```
 
 ![aj ask command](./bibi.gif)
 
 ---
 
-3. Interactive Mode
+### 3. Interactive Mode
 
-Talk with the AI like it’s your therapist, mentor, or rubber duck:
+Talk with the AI like it's your therapist, mentor, or rubber duck:
 
 ```
 aj interactive
 ```
 
-Supports memory via the vector store, so it won’t immediately forget your name.
+Supports memory via the vector store, so it won't immediately forget your name.
 _(Unlike your barista.)_
+
+**Colors:**
+- Your input appears in **blue**
+- Assistant responses appear in **yellow**
+- Model reasoning (in `<think>` tags) appears in **dark gray**
+
+**Options:**
+- `-t, --template <NAME>`: Use a specific template
+- `-s, --session <NAME>`: Use a named session
+
+**Examples:**
+```bash
+aj interactive
+aj interactive -s my-session
+aj interactive -t reading_buddy -s book-club
+```
 
 ![aj interactive command](./interactive.gif)
 
 ---
 
-4. Configuration
+### 4. Reset Database
+
+Start fresh by resetting the database to a pristine state:
+
+```
+aj reset
+```
+
+This drops all sessions, messages, and recreates the schema. Useful when you want a clean slate.
+
+**Aliases:** `aj r`
+
+---
+
+### 5. Configuration
 
 Edit your config at:
 
@@ -169,10 +197,10 @@ session_db_url: "/Users/you/Library/Application Support/com.awful-sec.aj/aj.db"
 
 ---
 
-5. Templates
+### 6. Templates
 
 Templates are YAML files in your config directory.
-Here’s a baby template:
+Here's a baby template:
 
 ```
 system_prompt: "You are Awful Jade, a helpful AI assistant programmed by Awful Security."
@@ -184,11 +212,13 @@ Add more, swap them in with `--template <name>`.
 ---
 
 ## 🧠 How it Works
+
 - **Brain**: Keeps memories in a deque, trims when it gets too wordy.
-- **VectorStore**: Embeds your inputs using all-mini-lm-l12-v2, saves to HNSW index.
+- **VectorStore**: Embeds your inputs using `all-MiniLM-L6-v2` via Candle (pure Rust ML), saves to HNSW index.
+- **Candle**: Pure Rust ML framework from HuggingFace. Automatically downloads and caches models from HuggingFace Hub.
 - **Config**: YAML-based, sane defaults, easy to tweak.
 - **Templates**: Prompt engineering without copy-pasting into your terminal like a caveman.
-- **Ensure All Mini**: If the BERT model’s not there, AJ fetches it automagically.
+- **No Python**: Everything runs in pure Rust with no external ML runtime dependencies.
 
 ---
 
@@ -220,11 +250,10 @@ But remember: with great power comes great YAML.
 
 ## 📜 License
 
-MIT. Do whatever you want, just don’t blame us when your AI remembers your browser history.
+MIT. Do whatever you want, just don't blame us when your AI remembers your browser history.
 
 ---
 
 💡 Awful Jade: bad name, good brain.
 
 ---
-

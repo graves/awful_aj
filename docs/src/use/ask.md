@@ -9,9 +9,13 @@ aj ask "Is Bibi really from Philly?"
 ![aj ask cli example](./aj_ask.gif)
 
 ## 🔧 Options
-- `--template` <name>: Use a specific prompt template.
-- `--model` <id>: Override model for this question.
-- `--session`: Session name for long running conversations.
+- `-t, --template` <name>: Use a specific prompt template.
+- `-s, --session` <name>: Session name for long running conversations.
+- `--one-shot`: Force one-shot mode, ignoring any session configured in config.yaml.
+
+## 🎨 Output Colors
+- Assistant responses appear in **yellow**
+- Model reasoning (in `<think>` tags) appears in **dark gray**
 
 ## ✅ When to use
 - Quick facts, transformations, summaries.
@@ -44,6 +48,13 @@ Options:
           Session name. When set, messages are persisted under this conversation.
 
           Using a session enables retrieval-augmented context from prior turns.
+
+      --one-shot
+          Force one-shot mode, ignoring any session configured in config.yaml.
+
+          When this flag is set, the prompt will be treated as standalone
+          with no memory or session tracking, even if a session_name is
+          configured in the config file.
 
   -h, --help
           Print help (see a summary with '-h')

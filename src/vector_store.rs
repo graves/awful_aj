@@ -4,12 +4,11 @@
 //!
 //! This module provides a wrapper around a [HNSW](https://arxiv.org/abs/1603.09320)
 //! approximate nearest-neighbor index (`hora` crate) plus a sentence embedding
-//! model (`rust-bert`). It embeds text into 384-d vectors using the
-//! `all-mini-lm-l12-v2` model, stores vectors with an ID↔memory mapping,
-//! and performs fast semantic lookups.
+//! model using Candle (pure Rust ML framework). It embeds text into 384-d vectors,
+//! stores vectors with an ID↔memory mapping, and performs fast semantic lookups.
 //!
 //! ## Responsibilities
-//! - **Embedding**: Uses `all-mini-lm-l12-v2` to convert text into vectors.
+//! - **Embedding**: Uses all-MiniLM-L6-v2 model via Candle to convert text into vectors.
 //! - **Indexing**: Maintains a HNSW index for ANN queries.
 //! - **Persistence**: Dumps the index to a binary file and metadata to YAML.
 //! - **Association**: Links each vector to a [`Memory`](crate::brain::Memory).
@@ -17,8 +16,7 @@
 //! ## Serialization layout
 //! - YAML contains: index snapshot (via `hora`), `dimension`, `current_id`,
 //!   `id_to_memory`, and a stable `uuid`.
-//! - The Transformer model **is not serialized**. It is reloaded from disk
-//!   when deserializing via [`VectorStore::from_serialized`].
+//! - The model is reloaded from cache when deserializing.
 //!
 //! ## Quick Example
 //! ```no_run
@@ -37,22 +35,141 @@
 //! # Ok(()) }
 //! ```
 
+use candle_core::{DType, Device, Tensor};
+use candle_nn::VarBuilder;
+use candle_transformers::models::bert::{BertModel, Config, DTYPE};
+use hf_hub::{api::sync::Api, Repo, RepoType};
 use hora::core::ann_index::{ANNIndex, SerializableIndex};
 use hora::core::metrics::Metric;
 use hora::index::hnsw_idx::HNSWIndex;
 use hora::index::hnsw_params::HNSWParams;
-use regex::Regex;
-#[cfg(feature = "embed-rust-bert")]
-use rust_bert::pipelines::sentence_embeddings::{
-    SentenceEmbeddingsBuilder, SentenceEmbeddingsModel,
-};
 use serde::{Serialize, Serializer, ser::SerializeStruct};
 use std::collections::HashMap;
 use std::error::Error;
 use std::path::PathBuf;
+use tokenizers::Tokenizer;
 
 use crate::brain::Memory;
 use crate::config_dir;
+
+/// Sentence embeddings model using Candle (pure Rust)
+pub struct SentenceEmbeddingsModel {
+    model: BertModel,
+    tokenizer: Tokenizer,
+    device: Device,
+}
+
+impl SentenceEmbeddingsModel {
+    /// Load the model from Hugging Face Hub
+    pub fn load() -> Result<Self, Box<dyn Error>> {
+        let device = Device::Cpu;
+        let model_id = "sentence-transformers/all-MiniLM-L6-v2";
+        let revision = "main";
+        
+        // Download model files from Hugging Face
+        let repo = Repo::with_revision(model_id.to_string(), RepoType::Model, revision.to_string());
+        let api = Api::new()?;
+        let api_repo = api.repo(repo);
+        
+        let config_filename = api_repo.get("config.json")?;
+        let tokenizer_filename = api_repo.get("tokenizer.json")?;
+        let weights_filename = api_repo.get("model.safetensors")?;
+        
+        // Load config
+        let config = std::fs::read_to_string(config_filename)?;
+        let config: Config = serde_json::from_str(&config)?;
+        
+        // Load tokenizer
+        let tokenizer = Tokenizer::from_file(tokenizer_filename)
+            .map_err(|e| format!("Failed to load tokenizer: {}", e))?;
+        
+        // Load weights
+        let vb = unsafe { VarBuilder::from_mmaped_safetensors(&[weights_filename], DTYPE, &device)? };
+        let model = BertModel::load(vb, &config)?;
+        
+        Ok(Self {
+            model,
+            tokenizer,
+            device,
+        })
+    }
+    
+    /// Encode text into an embedding
+    pub fn encode(&self, text: &str) -> Result<Vec<f32>, Box<dyn Error>> {
+        // Tokenize with automatic truncation at 512 tokens
+        let tokens = self.tokenizer
+            .encode(text, true)
+            .map_err(|e| format!("Tokenization error: {}", e))?;
+        
+        let token_ids = Tensor::new(tokens.get_ids(), &self.device)?
+            .unsqueeze(0)?;
+        let token_type_ids = Tensor::new(tokens.get_type_ids(), &self.device)?
+            .unsqueeze(0)?;
+        
+        // Run model inference
+        let output = self.model.forward(&token_ids, &token_type_ids, None)?;
+        
+        // Mean pooling
+        let embedding = self.mean_pooling(&output, tokens.get_attention_mask())?;
+        
+        // Normalize
+        let embedding = self.normalize(&embedding)?;
+        
+        // Convert to Vec<f32>
+        let embedding_vec = embedding.to_vec1::<f32>()?;
+        
+        Ok(embedding_vec)
+    }
+    
+    /// Mean pooling over token embeddings, considering attention mask
+    fn mean_pooling(&self, embeddings: &Tensor, attention_mask: &[u32]) -> Result<Tensor, Box<dyn Error>> {
+        // embeddings shape: [batch_size, seq_len, hidden_size] = [1, seq_len, 384]
+        // attention_mask: [seq_len]
+        // We need mask shape: [1, seq_len, 1] for proper broadcasting
+        
+        let mask = Tensor::new(attention_mask, &self.device)?
+            .to_dtype(DType::F32)?
+            .unsqueeze(0)?  // [1, seq_len]
+            .unsqueeze(2)?; // [1, seq_len, 1]
+        
+        // Multiply embeddings by mask (broadcasting happens automatically)
+        let masked = embeddings.broadcast_mul(&mask)?;
+        
+        // Sum across sequence dimension (dim=1)
+        let sum = masked.sum(1)?;  // [1, 384]
+        
+        // Count valid tokens (sum mask across sequence dimension)
+        let count = mask.sum(1)?.clamp(1f32, f32::INFINITY)?;  // [1, 1]
+        
+        // Divide to get mean
+        let mean = sum.broadcast_div(&count)?;  // [1, 384]
+        
+        // Squeeze to get [384]
+        let mean = mean.squeeze(0)?;
+        
+        Ok(mean)
+    }
+    
+    /// L2 normalize the embedding vector
+    fn normalize(&self, tensor: &Tensor) -> Result<Tensor, Box<dyn Error>> {
+        let norm = tensor.sqr()?.sum_all()?.sqrt()?;
+        let normalized = tensor.broadcast_div(&norm)?;
+        Ok(normalized)
+    }
+}
+
+/// Builder for sentence embeddings model
+pub struct SentenceEmbeddingsBuilder;
+
+impl SentenceEmbeddingsBuilder {
+    pub fn local(_path: impl AsRef<std::path::Path>) -> Self {
+        Self
+    }
+    
+    pub fn create_model(self) -> Result<SentenceEmbeddingsModel, Box<dyn std::error::Error>> {
+        SentenceEmbeddingsModel::load()
+    }
+}
 
 /// Persistent embedding store tied to a session.
 ///
@@ -61,9 +178,9 @@ use crate::config_dir;
 pub struct VectorStore {
     /// ANN index for similarity search.
     pub index: HNSWIndex<f32, usize>,
-    /// Dimensionality of vectors (usually 384 for MiniLM).
+    /// Dimensionality of vectors (384 for MiniLM-L6).
     dimension: usize,
-    /// Transformer encoder for embeddings.
+    /// Sentence embedding model.
     model: SentenceEmbeddingsModel,
     /// Auto-incrementing ID counter for new vectors.
     current_id: usize,
@@ -77,7 +194,7 @@ impl Serialize for VectorStore {
     /// Custom serializer for `VectorStore`.
     ///
     /// The sentence embedding model is **not** serialized (only a dummy `0` is written),
-    /// because it’s heavy and resides on disk. See [`VectorStore::from_serialized`]
+    /// because it's loaded from Hugging Face Hub. See [`VectorStore::from_serialized`]
     /// for the complementary logic that reloads the model at runtime.
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -101,9 +218,7 @@ impl<'de> Deserialize<'de> for VectorStore {
     /// Custom deserializer for `VectorStore`.
     ///
     /// Rehydrates the HNSW index from `<uuid>_hnsw_index.bin` and reloads the
-    /// sentence embedding model from `config_dir()/all-mini-lm-l12-v2`.
-    ///
-    /// If those artifacts are missing, deserialization will fail.
+    /// sentence embedding model from Hugging Face Hub.
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -225,7 +340,7 @@ impl VectorStore {
     /// Create an empty store with a fresh HNSW index and a loaded sentence embedding model.
     ///
     /// # Parameters
-    /// - `dimension`: Dimensionality expected by the index and vectors (MiniLM is 384).
+    /// - `dimension`: Dimensionality expected by the index and vectors (384 for MiniLM-L6).
     /// - `the_session_name`: Used to derive a stable `uuid` for locating persisted index files.
     ///
     /// # Returns
@@ -233,7 +348,7 @@ impl VectorStore {
     /// [`embed_text_to_vector`], [`add_vector_with_content`], and then [`build`].
     ///
     /// # Errors
-    /// Returns an error if the embedding model cannot be loaded from disk.
+    /// Returns an error if the embedding model cannot be loaded.
     ///
     /// # Example
     /// ```no_run
@@ -242,16 +357,7 @@ impl VectorStore {
     /// ```
     pub fn new(dimension: usize, the_session_name: String) -> Result<Self, Box<dyn Error>> {
         let index = HNSWIndex::new(dimension, &HNSWParams::default());
-
-        let model_root = Self::model_dir()?;
-        if !model_root.join("config.json").exists() {
-            return Err(format!(
-                "BERT model not found at {}. Run ensure_all_mini() first or set AWFUL_AJ_BERT_DIR.",
-                model_root.display()
-            )
-            .into());
-        }
-        let model = SentenceEmbeddingsBuilder::local(&model_root).create_model()?;
+        let model = SentenceEmbeddingsBuilder::local("").create_model()?;
 
         let digest = sha256::digest(the_session_name);
         let uuid = digest.as_bytes().iter().map(|b| *b as u64).sum();
@@ -316,8 +422,8 @@ impl VectorStore {
     /// - `uuid`: Used to find `<uuid>_hnsw_index.bin` under `config_dir()`.
     ///
     /// # Errors
-    /// - If the model folder is missing or invalid.
     /// - If the HNSW binary cannot be found or fails to load.
+    /// - If the model cannot be loaded from Hugging Face Hub.
     pub fn from_serialized(
         _index: HNSWIndex<f32, usize>,
         dimension: usize,
@@ -325,19 +431,7 @@ impl VectorStore {
         id_to_memory: HashMap<usize, Memory>,
         uuid: u64,
     ) -> Result<Self, Box<dyn Error>> {
-        let model_root = Self::model_dir()?;
-        if !model_root.join("config.json").exists() {
-            return Err(format!("BERT model not found at {}", model_root.display()).into());
-        }
-
-        let model = SentenceEmbeddingsBuilder::local(&model_root)
-            .create_model()
-            .map_err(|e| {
-                format!(
-                    "failed to load sentence model from {}: {e}",
-                    model_root.display()
-                )
-            })?;
+        let model = SentenceEmbeddingsBuilder::local("").create_model()?;
 
         let index_file = config_dir()?.join(format!("{}_hnsw_index.bin", uuid));
         let index = HNSWIndex::load(index_file.to_str().unwrap())?;
@@ -392,7 +486,7 @@ impl VectorStore {
     /// Finalize (build) the HNSW index.
     ///
     /// Must be called **after** a batch of `add_vector_with_content` operations
-    /// and **before** running [`search`], otherwise queries won’t see the new data.
+    /// and **before** running [`search`], otherwise queries won't see the new data.
     ///
     /// # Errors
     /// Returns `"build failed"` if the index fails to finalize.
@@ -413,7 +507,7 @@ impl VectorStore {
     ///
     /// # Errors
     /// - `"dimension mismatch"` if `vector.len() != self.dimension`.
-    /// - If the index hasn’t been built yet, results may be empty or suboptimal.
+    /// - If the index hasn't been built yet, results may be empty or suboptimal.
     pub fn search(&self, vector: &[f32], top_k: usize) -> Result<Vec<usize>, &'static str> {
         if vector.len() != self.dimension {
             return Err("dimension mismatch");
@@ -421,63 +515,21 @@ impl VectorStore {
         Ok(self.index.search(vector, top_k))
     }
 
-    /// Embed text into a dense vector using the loaded Transformer model.
+    /// Embed text into a dense vector using the loaded embedding model.
     ///
-    /// The text is first tokenized via [`tokenize_sentences`]. Embeddings are computed
-    /// for each sentence/code block, and this function returns the **first** vector.
+    /// The text is tokenized and embedded directly. If the text exceeds 512 tokens,
+    /// it will be automatically truncated by the tokenizer.
     ///
     /// # Parameters
-    /// - `text`: Arbitrary input text (may contain code blocks in triple backticks).
+    /// - `text`: Arbitrary input text to embed.
     ///
     /// # Returns
-    /// A single embedding vector (`Vec<f32>`). If the model returns multiple vectors,
-    /// the first is chosen. If it returns none, an empty vector is returned.
+    /// A 384-dimensional embedding vector (`Vec<f32>`).
     ///
     /// # Errors
     /// Propagates model inference errors.
     pub fn embed_text_to_vector(&self, text: &str) -> Result<Vec<f32>, Box<dyn Error>> {
-        let sentences: Vec<String> = Self::tokenize_sentences(text);
-        let embeddings = self.model.encode(&sentences)?;
-        Ok(embeddings.first().cloned().unwrap_or_default())
-    }
-
-    /// Tokenize text into a list of sentences while preserving fenced code blocks.
-    ///
-    /// - Content inside triple backticks ```like this``` is captured as whole “sentences”.
-    /// - Remaining text is split by punctuation (`.?!`).
-    /// - A trailing fragment (no final punctuation) is kept as a last sentence.
-    ///
-    /// # Parameters
-    /// - `text`: The raw input to split.
-    ///
-    /// # Returns
-    /// A `Vec<String>` alternating code chunks and natural sentences, suitable
-    /// for feeding to the embedding model.
-    ///
-    /// # Example
-    /// ```
-    /// # use awful_aj::vector_store::VectorStore;
-    /// let parts = VectorStore::tokenize_sentences("Hello world! ```let x=1;``` Bye?");
-    /// assert!(parts.iter().any(|s| s.contains("let x=1")));
-    /// ```
-    pub fn tokenize_sentences(text: &str) -> Vec<String> {
-        let mut sentences = Vec::new();
-        let code_block_re = Regex::new(r"```([^`]+)```").unwrap();
-        let sentence_re = Regex::new(r"(?s)[^.!?]+[.!?]").unwrap();
-
-        let remaining = code_block_re.replace_all(text, |caps: &regex::Captures| {
-            sentences.push(caps[1].trim().to_string());
-            "".to_string()
-        });
-        for cap in sentence_re.captures_iter(&remaining) {
-            sentences.push(cap[0].trim().to_string());
-        }
-        if let Some(last) = remaining.chars().last() {
-            if !['.', '?', '!'].contains(&last) {
-                sentences.push(remaining.trim().to_string());
-            }
-        }
-        sentences
+        self.model.encode(text)
     }
 
     /// Compute Euclidean distance between two equal-length vectors.
@@ -497,17 +549,6 @@ impl VectorStore {
             .map(|(i, av)| (av - b[i]).powi(2))
             .sum::<f32>()
             .sqrt()
-    }
-
-    /// Resolve the on-disk directory that should contain `all-mini-lm-l12-v2`.
-    ///
-    /// This is `config_dir()/all-mini-lm-l12-v2`. The caller is responsible for
-    /// ensuring the directory exists (see `ensure_all_mini()` in your crate root).
-    ///
-    /// # Errors
-    /// Returns an error if the application’s config directory cannot be determined.
-    fn model_dir() -> Result<PathBuf, Box<dyn Error>> {
-        Ok(config_dir()?.join("all-mini-lm-l12-v2"))
     }
 }
 
@@ -531,36 +572,3 @@ mod tests {
         Ok(())
     }
 }
-
-#[cfg(feature = "embed-stub")]
-mod doc_stub {
-    pub struct SentenceEmbeddingsModel;
-    impl SentenceEmbeddingsModel {
-        pub fn encode(
-            &self,
-            inputs: &[String],
-        ) -> Result<Vec<Vec<f32>>, Box<dyn std::error::Error>> {
-            Ok(inputs
-                .iter()
-                .map(|s| {
-                    let mut v = vec![0.0f32; 384];
-                    for (i, b) in s.as_bytes().iter().enumerate() {
-                        v[i % 384] += *b as f32 / 255.0;
-                    }
-                    v
-                })
-                .collect())
-        }
-    }
-    pub struct SentenceEmbeddingsBuilder;
-    impl SentenceEmbeddingsBuilder {
-        pub fn local(_path: impl AsRef<std::path::Path>) -> Self {
-            Self
-        }
-        pub fn create_model(self) -> Result<SentenceEmbeddingsModel, Box<dyn std::error::Error>> {
-            Ok(SentenceEmbeddingsModel)
-        }
-    }
-}
-#[cfg(feature = "embed-stub")]
-use doc_stub::{SentenceEmbeddingsBuilder, SentenceEmbeddingsModel};

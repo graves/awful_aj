@@ -67,6 +67,7 @@ use awful_aj::{api, commands, config, template};
 use clap::Parser;
 use directories::ProjectDirs;
 use once_cell::sync::OnceCell;
+use rusqlite::Connection;
 use std::{env, error::Error, fs, path::PathBuf, vec};
 use tracing::{debug, info};
 
@@ -139,13 +140,9 @@ async fn run() -> Result<(), Box<dyn Error>> {
             question,
             template,
             session,
-            model_dir,
-            no_cwd_link,
+            one_shot,
         } => {
             debug!("Entering ask mode");
-            // Ensure model is present (download + unzip if not)
-            let model_path = awful_aj::ensure_all_mini().await?;
-            info!("Using BERT model at {}", model_path.display());
 
             let config_path = determine_config_path()?;
 
@@ -157,9 +154,20 @@ async fn run() -> Result<(), Box<dyn Error>> {
                 format!("Failed to load config at {}: {}", config_path.display(), e)
             })?;
 
-            if session.is_some() {
+            // If --one-shot flag is set, clear the session name from config
+            if one_shot {
+                jade_config.session_name = None;
+                debug!("One-shot mode enabled - sessions disabled");
+            }
+
+            // Ensure conversation exists if session is provided via CLI or config
+            if let Some(session_name) = session {
                 jade_config
-                    .ensure_conversation_and_config(&session.unwrap())
+                    .ensure_conversation_and_config(&session_name)
+                    .await?;
+            } else if let Some(ref session_name) = jade_config.session_name.clone() {
+                jade_config
+                    .ensure_conversation_and_config(session_name)
                     .await?;
             }
 
@@ -168,28 +176,39 @@ async fn run() -> Result<(), Box<dyn Error>> {
         commands::Commands::Interactive {
             template,
             session,
-            model_dir,
-            no_cwd_link,
         } => {
             debug!("Entering interactive mode");
-            // Ensure model is present (download + unzip if not)
-            let model_path = awful_aj::ensure_all_mini().await?;
-            info!("Using BERT model at {}", model_path.display());
 
             let config_path = determine_config_path()?;
             let mut jade_config = config::load_config(config_path.to_str().unwrap())?;
 
-            if session.is_some() {
+            // Ensure conversation exists if session is provided via CLI or config
+            if let Some(session_name) = session {
                 jade_config
-                    .ensure_conversation_and_config(&session.unwrap())
+                    .ensure_conversation_and_config(&session_name)
+                    .await?;
+            } else if let Some(ref session_name) = jade_config.session_name.clone() {
+                jade_config
+                    .ensure_conversation_and_config(session_name)
                     .await?;
             }
 
             handle_interactive_command(jade_config, template).await?;
         }
-        commands::Commands::Init => {
+        commands::Commands::Init { overwrite } => {
             debug!("Initializing configuration");
-            init()?;
+            init(overwrite)?;
+        }
+        commands::Commands::Reset => {
+            debug!("Resetting database");
+            let config_path = determine_config_path()?;
+            let config_str = config_path.to_str().ok_or_else(|| {
+                format!("Invalid UTF-8 in config path: {}", config_path.display())
+            })?;
+            let jade_config = config::load_config(config_str).map_err(|e| {
+                format!("Failed to load config at {}: {}", config_path.display(), e)
+            })?;
+            reset(&jade_config)?;
         }
     }
 
@@ -369,7 +388,7 @@ use async_openai::types::ChatCompletionRequestUserMessageContent;
 /// ```no_run
 /// init()?;
 /// ```
-fn init() -> Result<(), Box<dyn Error>> {
+fn init(overwrite: bool) -> Result<(), Box<dyn Error>> {
     let config_dir = config_dir()?;
     let path = config_dir.join("templates");
     info!("Creating template config directory: {}", path.display());
@@ -377,7 +396,11 @@ fn init() -> Result<(), Box<dyn Error>> {
 
     // Write example template (simple_question.yaml)
     let template_path = config_dir.join("templates/simple_question.yaml");
-    info!("Creating template file: {}", template_path.display());
+    
+    if template_path.exists() && !overwrite {
+        info!("Template file already exists (skipping): {}", template_path.display());
+    } else {
+        info!("Creating template file: {}", template_path.display());
     let user_message = ChatCompletionRequestMessage::User(ChatCompletionRequestUserMessage {
         content: ChatCompletionRequestUserMessageContent::Text(
             "How do I read a file in Rust?".to_string(),
@@ -415,28 +438,138 @@ fn main() -> io::Result<()> {
         pre_user_message_content: None,
         post_user_message_content: None,
     };
-    let template_yaml = serde_yaml::to_string(&template)?;
-    fs::write(template_path, template_yaml)?;
+        let template_yaml = serde_yaml::to_string(&template)?;
+        fs::write(template_path, template_yaml)?;
+    }
+    
     // Create the default template
-    create_default_template(&path)?;
+    create_default_template(&path, overwrite)?;
 
     // Baseline config file with local defaults
     let config_path = config_dir.join("config.yaml");
-    info!("Creating config file: {}", config_path.display());
-    let config = config::AwfulJadeConfig {
-        api_base: "http://localhost:5001/v1".to_string(),
-        api_key: "CHANGEME".to_string(),
-        model: "jade_qwen3_4b".to_string(),
-        context_max_tokens: 8192,
-        assistant_minimum_context_tokens: 2048,
-        stop_words: vec!["\n<|im_start|>".to_string(), "<|im_end|>".to_string()],
-        session_db_url: "aj.db".to_string(),
-        session_name: None,
-        should_stream: None,
-    };
-    let config_yaml = serde_yaml::to_string(&config)?;
-    fs::write(config_path, config_yaml)?;
+    
+    if config_path.exists() && !overwrite {
+        info!("Config file already exists (skipping): {}", config_path.display());
+    } else {
+        info!("Creating config file: {}", config_path.display());
+        // Use absolute path for database to avoid CWD issues
+        let db_absolute_path = config_dir.join("aj.db");
+        let config = config::AwfulJadeConfig {
+            api_base: "http://localhost:5001/v1".to_string(),
+            api_key: "CHANGEME".to_string(),
+            model: "jade_qwen3_4b".to_string(),
+            context_max_tokens: 8192,
+            assistant_minimum_context_tokens: 2048,
+            stop_words: vec!["\n<|im_start|>".to_string(), "<|im_end|>".to_string()],
+            session_db_url: db_absolute_path.to_string_lossy().to_string(),
+            session_name: None,
+            should_stream: None,
+        };
+        let config_yaml = serde_yaml::to_string(&config)?;
+        fs::write(config_path, config_yaml)?;
+    }
 
+    // Create SQLite database with schema
+    let db_path = config_dir.join("aj.db");
+    
+    if db_path.exists() && !overwrite {
+        info!("Database file already exists (skipping): {}", db_path.display());
+    } else {
+        info!("Creating database file: {}", db_path.display());
+        create_database(&db_path)?;
+    }
+
+    Ok(())
+}
+
+/// Create and initialize the SQLite database with the required schema.
+///
+/// # Parameters
+/// - `db_path`: Path where the database file should be created.
+///
+/// # Returns
+/// `Ok(())` on success.
+///
+/// # Errors
+/// Returns database errors if creation or schema execution fails.
+fn create_database(db_path: &std::path::Path) -> Result<(), Box<dyn Error>> {
+    let conn = Connection::open(db_path)?;
+    
+    // Execute the schema
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS awful_configs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+            api_base TEXT NOT NULL,
+            api_key TEXT NOT NULL,
+            model TEXT NOT NULL,
+            context_max_tokens INTEGER NOT NULL,
+            assistant_minimum_context_tokens INTEGER NOT NULL,
+            stop_words TEXT NOT NULL,
+            conversation_id INTEGER,
+            FOREIGN KEY (conversation_id) REFERENCES conversations(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS conversations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+            session_name TEXT NOT NULL UNIQUE
+        );
+
+        CREATE TABLE IF NOT EXISTS messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            dynamic BOOLEAN NOT NULL DEFAULT true,
+            conversation_id INTEGER,
+            FOREIGN KEY (conversation_id) REFERENCES conversations(id)
+        );
+        "#,
+    )?;
+    
+    info!("Database initialized successfully");
+    Ok(())
+}
+
+/// Reset the database to a pristine state.
+///
+/// This function reads the database path from the config (respecting the user's
+/// configured path), deletes the database file, and recreates it with the original schema.
+///
+/// # Parameters
+/// - `config`: Application configuration to determine which database to reset.
+///
+/// # Returns
+/// `Ok(())` on success.
+///
+/// # Errors
+/// Returns database errors if the reset operation fails.
+///
+/// # Examples
+/// ```no_run
+/// let cfg = load_config("config.yaml")?;
+/// reset(&cfg)?;
+/// ```
+fn reset(config: &config::AwfulJadeConfig) -> Result<(), Box<dyn Error>> {
+    let db_path = std::path::PathBuf::from(&config.session_db_url);
+    
+    if !db_path.exists() {
+        info!("Database file does not exist at: {}", db_path.display());
+        info!("Creating new database...");
+        create_database(&db_path)?;
+        return Ok(());
+    }
+    
+    info!("Resetting database at: {}", db_path.display());
+    
+    // Close any existing connections by deleting and recreating the file
+    // This ensures no stale connections interfere with the reset
+    fs::remove_file(&db_path)?;
+    info!("Deleted existing database file");
+    
+    // Create fresh database with schema
+    create_database(&db_path)?;
+    
+    info!("Database reset successfully - all data cleared");
     Ok(())
 }
 
@@ -459,18 +592,26 @@ fn main() -> io::Result<()> {
 /// let dir = std::path::Path::new("/some/config/templates");
 /// create_default_template(dir)?;
 /// ```
-fn create_default_template(templates_dir: &std::path::Path) -> Result<(), Box<dyn Error>> {
+fn create_default_template(templates_dir: &std::path::Path, overwrite: bool) -> Result<(), Box<dyn Error>> {
     let default_template_path = templates_dir.join("default.yaml");
-    info!(
-        "Creating default template file: {}",
-        default_template_path.display()
-    );
-    // Minimal template with only a system prompt
-    let default_template_content = r#"
+    
+    if default_template_path.exists() && !overwrite {
+        info!(
+            "Default template file already exists (skipping): {}",
+            default_template_path.display()
+        );
+    } else {
+        info!(
+            "Creating default template file: {}",
+            default_template_path.display()
+        );
+        // Minimal template with only a system prompt
+        let default_template_content = r#"
 system_prompt: "Your name is Awful Jade, you are a helpful AI assistant programmed by Awful Security."
 messages: []
 "#;
-    fs::write(default_template_path, default_template_content)?;
+        fs::write(default_template_path, default_template_content)?;
+    }
     Ok(())
 }
 

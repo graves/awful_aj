@@ -250,8 +250,10 @@ pub async fn stream_response<'a>(
     let mut stream = client.chat().create_stream(request).await?;
     let mut lock = stdout().lock();
     let mut stdout = std::io::stdout();
-    stdout.execute(SetForegroundColor(Color::Blue))?;
+    stdout.execute(SetForegroundColor(Color::Yellow))?;
     stdout.execute(SetAttribute(Attribute::Bold))?;
+
+    let mut in_think_block = false;
 
     while let Some(result) = stream.next().await {
         match result {
@@ -260,7 +262,20 @@ pub async fn stream_response<'a>(
                 response.choices.iter().for_each(|chat_choice| {
                     if let Some(ref content) = chat_choice.delta.content {
                         response_string.push_str(content);
+                        
+                        // Check for <think> tag to enter think mode
+                        if content.contains("<think>") {
+                            in_think_block = true;
+                            stdout.execute(SetForegroundColor(Color::DarkGrey)).unwrap();
+                        }
+                        
                         write!(lock, "{content}").unwrap();
+                        
+                        // Check for </think> tag to exit think mode
+                        if content.contains("</think>") {
+                            in_think_block = false;
+                            stdout.execute(SetForegroundColor(Color::Yellow)).unwrap();
+                        }
                     }
                 });
             }
@@ -895,7 +910,7 @@ pub async fn interactive_mode<'a>(
         let new_x = x + " ".len() as u16; // Calculate the new x position
         stdout.execute(MoveTo(new_x, y))?; // Move the cursor to the new position
 
-        stdout.execute(SetForegroundColor(Color::Green))?;
+        stdout.execute(SetForegroundColor(Color::Blue))?;
 
         stdout.flush()?;
 
