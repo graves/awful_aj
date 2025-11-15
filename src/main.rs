@@ -12,7 +12,7 @@
 //! ## Model bootstrap
 //!
 //! On first run, the binary ensures the local sentence-embedding model
-//! `all-mini-lm-l12-v2` exists under the per-user config directory
+//! `sentence-transformers/all-MiniLM-L6-v2` exists under the per-user config directory
 //! (see [`config_dir`]). If it is missing, the library’s
 //! `awful_aj::ensure_all_mini()` will **download and unzip** the model into the
 //! correct location. Subsequent runs reuse the on-disk model.
@@ -31,7 +31,7 @@
 //!   2. Loads (or creates) a per-session vector store YAML file
 //!      `"<digest>_vector_store.yaml"` in the config directory, and
 //!   3. Uses that store to retrieve “memories” (HNSW nearest-neighbors from
-//!      `all-mini-lm-l12-v2` embeddings) that are eligible to be included
+//!      `all-MiniLM-L6-v2` embeddings with 384-dim vectors) that are eligible to be included
 //!      with the current prompt.
 //!
 //! The proportion of the LLM context window dedicated to memory is controlled by a
@@ -66,10 +66,107 @@ use awful_aj::vector_store::VectorStore;
 use awful_aj::{api, commands, config, template};
 use clap::Parser;
 use directories::ProjectDirs;
+use indicatif::{ProgressBar, ProgressStyle};
 use once_cell::sync::OnceCell;
 use rusqlite::Connection;
 use std::{env, error::Error, fs, path::PathBuf, vec};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tracing::{debug, info};
+
+use serde::{Deserialize, Serialize};
+use std::io::Read;
+
+// ---- RAG cache types & helpers (bincode-backed) ----
+
+#[derive(Debug, Serialize, Deserialize)]
+struct CachedChunk {
+    text: String,
+    vector: Vec<f32>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct RagCacheFile {
+    version: u8,
+    model_id: String,
+    chunk_size: usize,
+    overlap: usize,
+    file_hash: String,
+    created_unix: i64,
+    chunks: Vec<CachedChunk>,
+}
+
+fn rag_cache_dir() -> Result<std::path::PathBuf, Box<dyn Error>> {
+    let root = config_dir()?;
+    let dir = root.join("rag_cache");
+    fs::create_dir_all(&dir)?;
+    Ok(dir)
+}
+
+fn hash_bytes_sha(path: &str) -> Result<String, Box<dyn Error>> {
+    let mut f = fs::File::open(path)?;
+    let mut hasher = blake3::Hasher::new();
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let n = f.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(hasher.finalize().to_hex().to_string())
+}
+
+fn cache_key_path(
+    file_hash: &str,
+    model_id: &str,
+    chunk_size: usize,
+    overlap: usize,
+) -> Result<std::path::PathBuf, Box<dyn Error>> {
+    let safe_model = model_id.replace('/', "_");
+    Ok(rag_cache_dir()?.join(format!(
+        "{}__{}__cs{}__ov{}.bin",
+        file_hash, safe_model, chunk_size, overlap
+    )))
+}
+
+fn try_load_cache(
+    file_hash: &str,
+    model_id: &str,
+    chunk_size: usize,
+    overlap: usize,
+) -> Result<Option<RagCacheFile>, Box<dyn Error>> {
+    let path = cache_key_path(file_hash, model_id, chunk_size, overlap)?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    let bytes = fs::read(path)?;
+    // bincode v2:
+    let (cache, _len): (RagCacheFile, usize) =
+        bincode::serde::decode_from_slice(&bytes, bincode::config::standard())?;
+    if cache.version != 1
+        || cache.model_id != model_id
+        || cache.chunk_size != chunk_size
+        || cache.overlap != overlap
+        || cache.file_hash != file_hash
+    {
+        return Ok(None);
+    }
+    Ok(Some(cache))
+}
+
+fn save_cache(cache: &RagCacheFile) -> Result<(), Box<dyn Error>> {
+    let path = cache_key_path(
+        &cache.file_hash,
+        &cache.model_id,
+        cache.chunk_size,
+        cache.overlap,
+    )?;
+    // bincode v2:
+    let bytes = bincode::serde::encode_to_vec(cache, bincode::config::standard())?;
+    fs::write(path, bytes)?;
+    Ok(())
+}
 
 // A static OnceCell to hold the tracing subscriber, ensuring it is only initialized once.
 static TRACING: OnceCell<()> = OnceCell::new();
@@ -141,6 +238,9 @@ async fn run() -> Result<(), Box<dyn Error>> {
             template,
             session,
             one_shot,
+            rag,
+            rag_top_k,
+            pretty,
         } => {
             debug!("Entering ask mode");
 
@@ -171,11 +271,14 @@ async fn run() -> Result<(), Box<dyn Error>> {
                     .await?;
             }
 
-            handle_ask_command(jade_config, question, template).await?;
+            handle_ask_command(jade_config, question, template, rag, rag_top_k, pretty).await?;
         }
         commands::Commands::Interactive {
             template,
             session,
+            rag,
+            rag_top_k,
+            pretty,
         } => {
             debug!("Entering interactive mode");
 
@@ -193,7 +296,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
                     .await?;
             }
 
-            handle_interactive_command(jade_config, template).await?;
+            handle_interactive_command(jade_config, template, rag, rag_top_k, pretty).await?;
         }
         commands::Commands::Init { overwrite } => {
             debug!("Initializing configuration");
@@ -247,10 +350,44 @@ async fn handle_ask_command(
     jade_config: config::AwfulJadeConfig,
     question: Option<String>,
     template_name: Option<String>,
+    rag: Option<String>,
+    rag_top_k: usize,
+    pretty: bool,
 ) -> Result<(), Box<dyn Error>> {
     let template_name = template_name.unwrap_or_else(|| "simple_question".to_string());
     let template = template::load_template(&template_name).await?;
     let question = question.unwrap_or_else(|| "What is the meaning of life?".to_string());
+
+    // Process RAG documents if provided
+    let rag_context = if let Some(rag_files) = rag {
+        use crossterm::{
+            ExecutableCommand,
+            style::{Attribute, Color, Print, SetAttribute, SetForegroundColor},
+        };
+        use std::io::stdout;
+
+        let mut stdout = stdout();
+        stdout.execute(SetForegroundColor(Color::Cyan))?;
+        stdout.execute(SetAttribute(Attribute::Bold))?;
+        stdout.execute(Print("📚 Processing RAG documents..."))?;
+        stdout.execute(SetAttribute(Attribute::Reset))?;
+        stdout.execute(SetForegroundColor(Color::Reset))?;
+        stdout.execute(Print("\n"))?;
+
+        let context = process_rag_documents(&rag_files, &question, rag_top_k)?;
+
+        if !context.is_empty() {
+            stdout.execute(SetForegroundColor(Color::Cyan))?;
+            stdout.execute(SetAttribute(Attribute::Bold))?;
+            stdout.execute(Print("✓ RAG context injected into conversation\n"))?;
+            stdout.execute(SetAttribute(Attribute::Reset))?;
+            stdout.execute(SetForegroundColor(Color::Reset))?;
+        }
+
+        Some(context)
+    } else {
+        None
+    };
 
     if let Some(the_session_name) = jade_config.session_name.clone() {
         let digest = sha256::digest(&the_session_name);
@@ -258,8 +395,15 @@ async fn handle_ask_command(
         let vector_store_path = config_dir()?.join(vector_store_name);
         let vector_store_string = fs::read_to_string(&vector_store_path);
 
-        let mut vector_store: VectorStore = if vector_store_string.is_ok() {
-            serde_yaml::from_str(&vector_store_string.unwrap())?
+        let mut vector_store: VectorStore = if let Ok(yaml_content) = vector_store_string {
+            // Try to deserialize, but if it fails (e.g., missing binary index file), create new
+            match serde_yaml::from_str(&yaml_content) {
+                Ok(store) => store,
+                Err(e) => {
+                    debug!("Failed to load vector store, creating new one: {}", e);
+                    VectorStore::new(384, jade_config.session_name.clone().unwrap())?
+                }
+            }
         } else {
             VectorStore::new(384, jade_config.session_name.clone().unwrap())?
         };
@@ -270,21 +414,84 @@ async fn handle_ask_command(
 
         let mut brain = Brain::new(max_brain_tokens, &template);
 
-        api::ask(
+        // Set RAG context if available
+        brain.rag_context = rag_context;
+
+        let response = api::ask(
             &jade_config,
             question,
             &template,
             Some(&mut vector_store),
             Some(&mut brain),
+            pretty,
         )
         .await?;
 
-        let _res = vector_store.serialize(
-            &vector_store_path,
-            jade_config.session_name.clone().unwrap(),
-        );
+        // Print response if not streaming (streaming prints inline)
+        if jade_config.should_stream != Some(true) {
+            if pretty {
+                // Use pretty printer for markdown formatting and syntax highlighting
+                awful_aj::pretty::print_pretty(&response)?;
+            } else {
+                // Plain output
+                use crossterm::{
+                    ExecutableCommand,
+                    style::{Attribute, Color, SetAttribute, SetForegroundColor},
+                };
+                use std::io::stdout;
+                let mut out = stdout();
+                out.execute(SetForegroundColor(Color::Yellow))?;
+                out.execute(SetAttribute(Attribute::Bold))?;
+                println!("{}", response);
+                out.execute(SetAttribute(Attribute::Reset))?;
+                out.execute(SetForegroundColor(Color::Reset))?;
+            }
+        }
+
+        // Persist vector store to YAML (avoid serde::Serialize::serialize name clash)
+        if let Ok(file) = fs::File::create(&vector_store_path) {
+            if let Err(e) = serde_yaml::to_writer(file, &vector_store) {
+                debug!(
+                    "Failed to persist vector store to {}: {}",
+                    vector_store_path.display(),
+                    e
+                );
+            }
+        }
     } else {
-        api::ask(&jade_config, question, &template, None, None).await?;
+        let mut brain_opt = None;
+        if rag_context.is_some() {
+            let mut brain = Brain::new(2048, &template);
+            brain.rag_context = rag_context;
+            brain_opt = Some(brain);
+        }
+
+        let response = if let Some(mut brain) = brain_opt {
+            api::ask(&jade_config, question, &template, None, Some(&mut brain), pretty).await?
+        } else {
+            api::ask(&jade_config, question, &template, None, None, pretty).await?
+        };
+
+        // Print response if not streaming (streaming prints inline)
+        if jade_config.should_stream != Some(true) {
+            if pretty {
+                // Use pretty printer for markdown formatting and syntax highlighting
+                awful_aj::pretty::print_pretty(&response)?;
+            } else {
+                // Plain output
+                use crossterm::{
+                    ExecutableCommand,
+                    style::{Attribute, Color, SetAttribute, SetForegroundColor},
+                };
+                use std::io::stdout;
+                let mut out = stdout();
+                out.execute(SetForegroundColor(Color::Yellow))?;
+                out.execute(SetAttribute(Attribute::Bold))?;
+                println!("{}", response);
+                out.execute(SetAttribute(Attribute::Reset))?;
+                out.execute(SetForegroundColor(Color::Reset))?;
+            }
+        }
     }
 
     Ok(())
@@ -313,9 +520,44 @@ async fn handle_ask_command(
 async fn handle_interactive_command(
     jade_config: config::AwfulJadeConfig,
     template_name: Option<String>,
+    rag: Option<String>,
+    rag_top_k: usize,
+    pretty: bool,
 ) -> Result<(), Box<dyn Error>> {
     let template_name = template_name.unwrap_or_else(|| "simple_question".to_string());
     let template = template::load_template(&template_name).await?;
+
+    // Process RAG documents if provided
+    let rag_context = if let Some(rag_files) = rag {
+        use crossterm::{
+            ExecutableCommand,
+            style::{Attribute, Color, Print, SetAttribute, SetForegroundColor},
+        };
+        use std::io::stdout;
+
+        let mut stdout = stdout();
+        stdout.execute(SetForegroundColor(Color::Cyan))?;
+        stdout.execute(SetAttribute(Attribute::Bold))?;
+        stdout.execute(Print("📚 Processing RAG documents..."))?;
+        stdout.execute(SetAttribute(Attribute::Reset))?;
+        stdout.execute(SetForegroundColor(Color::Reset))?;
+        stdout.execute(Print("\n"))?;
+
+        // Use empty query for initial processing - context will be used for all queries in session
+        let context = process_rag_documents(&rag_files, "", rag_top_k)?;
+
+        if !context.is_empty() {
+            stdout.execute(SetForegroundColor(Color::Cyan))?;
+            stdout.execute(SetAttribute(Attribute::Bold))?;
+            stdout.execute(Print("✓ RAG context loaded and will be available throughout the session\n"))?;
+            stdout.execute(SetAttribute(Attribute::Reset))?;
+            stdout.execute(SetForegroundColor(Color::Reset))?;
+        }
+
+        Some(context)
+    } else {
+        None
+    };
 
     // Load or create session-scoped vector store
     let the_session_name = jade_config.session_name.clone().unwrap();
@@ -324,8 +566,15 @@ async fn handle_interactive_command(
     let vector_store_path = config_dir()?.join(vector_store_name);
     let vector_store_string = fs::read_to_string(&vector_store_path);
 
-    let vector_store: VectorStore = if vector_store_string.is_ok() {
-        serde_yaml::from_str(&vector_store_string.unwrap())?
+    let vector_store: VectorStore = if let Ok(yaml_content) = vector_store_string {
+        // Try to deserialize, but if it fails (e.g., missing binary index file), create new
+        match serde_yaml::from_str(&yaml_content) {
+            Ok(store) => store,
+            Err(e) => {
+                debug!("Failed to load vector store, creating new one: {}", e);
+                VectorStore::new(384, jade_config.session_name.clone().unwrap())?
+            }
+        }
     } else {
         VectorStore::new(384, jade_config.session_name.clone().unwrap())?
     };
@@ -334,8 +583,12 @@ async fn handle_interactive_command(
     let max_brain_token_percentage = 0.25;
     let max_brain_tokens =
         (max_brain_token_percentage * jade_config.context_max_tokens as f32) as u16;
-    let brain = Brain::new(max_brain_tokens, &template);
-    api::interactive_mode(&jade_config, vector_store, brain, &template).await
+    let mut brain = Brain::new(max_brain_tokens, &template);
+
+    // Set RAG context if available
+    brain.rag_context = rag_context;
+
+    api::interactive_mode(&jade_config, vector_store, brain, &template, pretty).await
 }
 
 /// Compute the path of the active configuration file.
@@ -389,27 +642,43 @@ use async_openai::types::ChatCompletionRequestUserMessageContent;
 /// init()?;
 /// ```
 fn init(overwrite: bool) -> Result<(), Box<dyn Error>> {
+    let pb = ProgressBar::new_spinner();
+    pb.set_style(
+        ProgressStyle::with_template("{spinner:.cyan} {msg}")
+            .unwrap()
+            .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
+    );
+    pb.enable_steady_tick(Duration::from_millis(80));
+
     let config_dir = config_dir()?;
     let path = config_dir.join("templates");
+
+    pb.set_message("Creating template directory...");
     info!("Creating template config directory: {}", path.display());
     fs::create_dir_all(path.clone())?;
 
     // Write example template (simple_question.yaml)
     let template_path = config_dir.join("templates/simple_question.yaml");
-    
-    if template_path.exists() && !overwrite {
-        info!("Template file already exists (skipping): {}", template_path.display());
-    } else {
-        info!("Creating template file: {}", template_path.display());
-    let user_message = ChatCompletionRequestMessage::User(ChatCompletionRequestUserMessage {
-        content: ChatCompletionRequestUserMessageContent::Text(
-            "How do I read a file in Rust?".to_string(),
-        ),
-        name: None,
-    });
 
-    // A didactic system message with sample Rust code; this is just an example template.
-    let system_message_content = "Use `std::fs::File` and `std::io::Read` in Rust to read a file:
+    if template_path.exists() && !overwrite {
+        pb.set_message("Template file already exists (skipping)...");
+        info!(
+            "Template file already exists (skipping): {}",
+            template_path.display()
+        );
+    } else {
+        pb.set_message("Writing simple_question template...");
+        info!("Creating template file: {}", template_path.display());
+        let user_message = ChatCompletionRequestMessage::User(ChatCompletionRequestUserMessage {
+            content: ChatCompletionRequestUserMessageContent::Text(
+                "How do I read a file in Rust?".to_string(),
+            ),
+            name: None,
+        });
+
+        // A didactic system message with sample Rust code; this is just an example template.
+        let system_message_content =
+            "Use `std::fs::File` and `std::io::Read` in Rust to read a file:
 ```rust
 use std::fs::File;
 use std::io::{self, Read};
@@ -422,35 +691,43 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 ```"
-    .to_string();
+            .to_string();
 
-    let system_message = ChatCompletionRequestMessage::System(ChatCompletionRequestSystemMessage {
-        content: ChatCompletionRequestSystemMessageContent::Text(system_message_content),
-        name: None,
-    });
+        let system_message =
+            ChatCompletionRequestMessage::System(ChatCompletionRequestSystemMessage {
+                content: ChatCompletionRequestSystemMessageContent::Text(system_message_content),
+                name: None,
+            });
 
-    // Also write a minimal default template
-    let template = template::ChatTemplate {
-        system_prompt: "You are Awful Jade, a helpful AI assistant programmed by Awful Security."
-            .to_string(),
-        messages: vec![user_message, system_message],
-        response_format: None,
-        pre_user_message_content: None,
-        post_user_message_content: None,
-    };
+        // Also write a minimal default template
+        let template = template::ChatTemplate {
+            system_prompt:
+                "You are Awful Jade, a helpful AI assistant programmed by Awful Security."
+                    .to_string(),
+            messages: vec![user_message, system_message],
+            response_format: None,
+            pre_user_message_content: None,
+            post_user_message_content: None,
+        };
         let template_yaml = serde_yaml::to_string(&template)?;
         fs::write(template_path, template_yaml)?;
     }
-    
+
     // Create the default template
+    pb.set_message("Writing default template...");
     create_default_template(&path, overwrite)?;
 
     // Baseline config file with local defaults
     let config_path = config_dir.join("config.yaml");
-    
+
     if config_path.exists() && !overwrite {
-        info!("Config file already exists (skipping): {}", config_path.display());
+        pb.set_message("Config file already exists (skipping)...");
+        info!(
+            "Config file already exists (skipping): {}",
+            config_path.display()
+        );
     } else {
+        pb.set_message("Writing config file...");
         info!("Creating config file: {}", config_path.display());
         // Use absolute path for database to avoid CWD issues
         let db_absolute_path = config_dir.join("aj.db");
@@ -471,13 +748,20 @@ fn main() -> io::Result<()> {
 
     // Create SQLite database with schema
     let db_path = config_dir.join("aj.db");
-    
+
     if db_path.exists() && !overwrite {
-        info!("Database file already exists (skipping): {}", db_path.display());
+        pb.set_message("Database already exists (skipping)...");
+        info!(
+            "Database file already exists (skipping): {}",
+            db_path.display()
+        );
     } else {
+        pb.set_message("Creating database...");
         info!("Creating database file: {}", db_path.display());
         create_database(&db_path)?;
     }
+
+    pb.finish_with_message("✓ Initialization complete");
 
     Ok(())
 }
@@ -494,7 +778,7 @@ fn main() -> io::Result<()> {
 /// Returns database errors if creation or schema execution fails.
 fn create_database(db_path: &std::path::Path) -> Result<(), Box<dyn Error>> {
     let conn = Connection::open(db_path)?;
-    
+
     // Execute the schema
     conn.execute_batch(
         r#"
@@ -525,7 +809,7 @@ fn create_database(db_path: &std::path::Path) -> Result<(), Box<dyn Error>> {
         );
         "#,
     )?;
-    
+
     info!("Database initialized successfully");
     Ok(())
 }
@@ -551,24 +835,24 @@ fn create_database(db_path: &std::path::Path) -> Result<(), Box<dyn Error>> {
 /// ```
 fn reset(config: &config::AwfulJadeConfig) -> Result<(), Box<dyn Error>> {
     let db_path = std::path::PathBuf::from(&config.session_db_url);
-    
+
     if !db_path.exists() {
         info!("Database file does not exist at: {}", db_path.display());
         info!("Creating new database...");
         create_database(&db_path)?;
         return Ok(());
     }
-    
+
     info!("Resetting database at: {}", db_path.display());
-    
+
     // Close any existing connections by deleting and recreating the file
     // This ensures no stale connections interfere with the reset
     fs::remove_file(&db_path)?;
     info!("Deleted existing database file");
-    
+
     // Create fresh database with schema
     create_database(&db_path)?;
-    
+
     info!("Database reset successfully - all data cleared");
     Ok(())
 }
@@ -592,9 +876,12 @@ fn reset(config: &config::AwfulJadeConfig) -> Result<(), Box<dyn Error>> {
 /// let dir = std::path::Path::new("/some/config/templates");
 /// create_default_template(dir)?;
 /// ```
-fn create_default_template(templates_dir: &std::path::Path, overwrite: bool) -> Result<(), Box<dyn Error>> {
+fn create_default_template(
+    templates_dir: &std::path::Path,
+    overwrite: bool,
+) -> Result<(), Box<dyn Error>> {
     let default_template_path = templates_dir.join("default.yaml");
-    
+
     if default_template_path.exists() && !overwrite {
         info!(
             "Default template file already exists (skipping): {}",
@@ -615,6 +902,275 @@ messages: []
     Ok(())
 }
 
+/// Process RAG documents and retrieve relevant context for the query.
+///
+/// This function:
+/// 1. Parses the comma-separated list of file paths
+/// 2. Reads each plain text file
+/// 3. Creates a temporary VectorStore for RAG documents
+/// 4. Intelligently chunks documents using tokenizer (512 tokens per chunk with 128 token overlap)
+/// 5. Embeds the document chunks
+/// 6. Retrieves the top-k most relevant chunks based on the query
+/// 7. Returns concatenated relevant chunks as a single string
+///
+/// # Parameters
+/// - `rag_files`: Comma-separated list of file paths
+/// - `query`: The user's question to find relevant context for
+///
+/// # Returns
+/// A string containing the concatenated relevant document chunks
+///
+/// # Errors
+/// - I/O errors when reading files
+/// - Vector store embedding/search errors
+/// - Tokenizer errors
+fn process_rag_documents(
+    rag_files: &str,
+    query: &str,
+    top_k: usize,
+) -> Result<String, Box<dyn Error>> {
+    use hf_hub::{Repo, RepoType, api::sync::Api};
+    use indicatif::{ProgressBar, ProgressStyle};
+    use rayon::prelude::*;
+    use std::time::Duration;
+    use tokenizers::{Tokenizer, TruncationDirection, TruncationParams, TruncationStrategy};
+    use tracing::{debug, info};
+
+    // Spinner setup — single dynamic line
+    let pb = ProgressBar::new_spinner();
+    pb.set_style(
+        ProgressStyle::with_template("{spinner:.blue} {msg}")?
+            .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
+    );
+    pb.enable_steady_tick(Duration::from_millis(80));
+    pb.set_message("RAG: preparing…");
+
+    // Parse comma-separated paths
+    let file_paths: Vec<&str> = rag_files
+        .split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if file_paths.is_empty() {
+        pb.finish_with_message("RAG: no files provided");
+        return Ok(String::new());
+    }
+
+    pb.set_message(format!("RAG: loading {} file(s)…", file_paths.len()));
+    info!("RAG: Processing {} document(s)", file_paths.len());
+    debug!("RAG: Document paths: {:?}", file_paths);
+
+    // Load tokenizer (consistent with MiniLM-L6-v2)
+    pb.set_message("RAG: loading tokenizer…");
+    let model_id = "sentence-transformers/all-MiniLM-L6-v2";
+    let repo = Repo::with_revision(model_id.to_string(), RepoType::Model, "main".to_string());
+    let api = Api::new()?;
+    let api_repo = api.repo(repo);
+    let tokenizer_filename = api_repo.get("tokenizer.json")?;
+    let mut tokenizer = Tokenizer::from_file(tokenizer_filename)
+        .map_err(|e| format!("Failed to load tokenizer: {}", e))?;
+
+    // RAG store (384-dim)
+    let mut rag_store = VectorStore::new(384, "rag_temp".to_string())?;
+
+    // Chunking params
+    let chunk_size = 512usize;
+    let overlap = 128usize;
+    info!(
+        "RAG: Using chunk size of {} tokens with {} token overlap",
+        chunk_size, overlap
+    );
+
+    // Sliding window via truncation + stride (no silent 128-cap)
+    let _ = tokenizer.with_truncation(Some(TruncationParams {
+        max_length: chunk_size,
+        strategy: TruncationStrategy::LongestFirst,
+        stride: overlap,
+        direction: TruncationDirection::Right,
+    }));
+
+    // We’ll gather (text, vector) for all chunks across files,
+    // mixing bincode cache hits & freshly embedded items.
+    let mut all_chunks_with_vecs: Vec<(String, Vec<f32>)> = Vec::new();
+    let mut cache_hits = 0usize;
+    let mut cache_misses = 0usize;
+
+    for file_path in &file_paths {
+        pb.set_message(format!("RAG: hashing '{}'…", file_path));
+        let file_hash = hash_bytes_sha(file_path)?;
+
+        if let Some(cache) = try_load_cache(&file_hash, model_id, chunk_size, overlap)? {
+            // Cache hit: use cached chunks+vectors directly
+            pb.set_message(format!(
+                "RAG: cache hit ‘{}’ → {} chunks",
+                file_path,
+                cache.chunks.len()
+            ));
+            for c in cache.chunks {
+                all_chunks_with_vecs.push((c.text, c.vector));
+            }
+            cache_hits += 1;
+            continue;
+        }
+
+        cache_misses += 1;
+
+        // No cache → read, tokenize, chunk, embed, then persist cache
+        pb.set_message(format!("RAG: reading '{}'…", file_path));
+        let content = fs::read_to_string(file_path)
+            .map_err(|e| format!("Failed to read RAG file {}: {}", file_path, e))?;
+        debug!(
+            "RAG: Read document '{}' ({} bytes)",
+            file_path,
+            content.len()
+        );
+
+        pb.set_message(format!("RAG: tokenizing '{}'…", file_path));
+        let first = tokenizer
+            .encode(content.clone(), true)
+            .map_err(|e| format!("Failed to tokenize document '{}': {}", file_path, e))?;
+
+        // First window + overflows
+        let mut windows = Vec::with_capacity(1 + first.get_overflowing().len());
+        windows.push(first.clone());
+        windows.extend_from_slice(first.get_overflowing());
+
+        let mut fresh_chunks_text: Vec<String> = Vec::new();
+        for win in windows {
+            let ids = win.get_ids(); // &[u32]
+            if ids.is_empty() {
+                continue;
+            }
+            let chunk_text = tokenizer
+                .decode(ids, true)
+                .map_err(|e| format!("Failed to decode chunk: {}", e))?;
+            if chunk_text.trim().len() > 50 {
+                fresh_chunks_text.push(chunk_text);
+            }
+        }
+        debug!(
+            "RAG: Extracted {} chunks from '{}'",
+            fresh_chunks_text.len(),
+            file_path
+        );
+
+        // Embed fresh chunks in parallel
+        pb.set_message(format!(
+            "RAG: embedding {} chunk(s) for '{}'…",
+            fresh_chunks_text.len(),
+            file_path
+        ));
+        // Embed fresh chunks in parallel — live progress on one line
+        let total_file = fresh_chunks_text.len();
+        let counter = AtomicUsize::new(0);
+        let pb_file = pb.clone();
+        pb_file.set_message(format!(
+            "RAG: embedding 0/{total_file} chunk(s) for '{}'…",
+            file_path
+        ));
+
+        let embedded: Vec<(String, Vec<f32>)> = fresh_chunks_text
+            .par_iter()
+            .map(|text| {
+                let vec = rag_store
+                    .embed_text_to_vector(text)
+                    .unwrap_or_else(|e| panic!("Failed to embed '{}': {}", file_path, e));
+
+                // Update the same spinner line with a done/total ratio
+                let done = counter.fetch_add(1, Ordering::Relaxed) + 1;
+                // Throttle updates a bit to avoid overwhelming the terminal
+                if done % 50 == 0 || done == total_file {
+                    pb_file.set_message(format!(
+                        "RAG: embedding {done}/{total_file} chunk(s) for ‘{}’…",
+                        file_path
+                    ));
+                }
+
+                (text.clone(), vec)
+            })
+            .collect();
+
+        // Save bincode cache
+        let cache = RagCacheFile {
+            version: 1,
+            model_id: model_id.to_string(),
+            chunk_size,
+            overlap,
+            file_hash: file_hash.clone(),
+            created_unix: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64,
+            chunks: embedded
+                .iter()
+                .map(|(t, v)| CachedChunk {
+                    text: t.clone(),
+                    vector: v.clone(),
+                })
+                .collect(),
+        };
+        save_cache(&cache)?;
+
+        all_chunks_with_vecs.extend(embedded);
+        pb.set_message(format!("RAG: cached '{}' ✓", file_path));
+    }
+
+    info!(
+        "RAG: cache hits: {}, cache misses: {}",
+        cache_hits, cache_misses
+    );
+
+    // Add everything to the store and keep vector list for distance calc
+    pb.set_message("RAG: building index…");
+    let mut rag_vectors: Vec<Vec<f32>> = Vec::with_capacity(all_chunks_with_vecs.len());
+    for (text, vector) in all_chunks_with_vecs.into_iter() {
+        let memory = awful_aj::brain::Memory::new(async_openai::types::Role::System, text);
+        rag_store.add_vector_with_content(vector.clone(), memory)?;
+        rag_vectors.push(vector);
+    }
+    rag_store.build()?;
+
+    pb.set_message("RAG: searching…");
+    let query_vector = rag_store.embed_text_to_vector(query)?;
+    let neighbor_ids = rag_store.search(&query_vector, top_k)?;
+    info!(
+        "RAG: Retrieved {} relevant chunk(s) for query",
+        neighbor_ids.len()
+    );
+
+    // Distance filtering without re-embedding
+    let mut distances_and_content: Vec<(f32, String)> = Vec::with_capacity(neighbor_ids.len());
+    for id in &neighbor_ids {
+        if let Some(memory) = rag_store.get_content_by_id(*id) {
+            if let Some(chunk_vector) = rag_vectors.get(*id) {
+                let distance = VectorStore::calc_euclidean_distance(
+                    query_vector.clone(),
+                    chunk_vector.clone(),
+                );
+                distances_and_content.push((distance, memory.content.clone()));
+            }
+        }
+    }
+
+    let mut relevant_chunks = Vec::new();
+    if !distances_and_content.is_empty() {
+        let best = distances_and_content
+            .iter()
+            .map(|(d, _)| *d)
+            .fold(f32::INFINITY, f32::min);
+        let threshold = best * 1.10;
+        for (d, c) in distances_and_content {
+            if d <= threshold {
+                relevant_chunks.push(c);
+            }
+        }
+    }
+
+    let context = relevant_chunks.join("\n\n---\n\n");
+    pb.finish_with_message(format!("RAG: ready ✓ ({} chars of context)", context.len()));
+    Ok(context)
+}
+
 /// Resolve the per-user configuration directory.
 ///
 /// Uses [`directories::ProjectDirs`] with the tuple `("com", "awful-sec", "aj")`
@@ -622,10 +1178,10 @@ messages: []
 ///
 /// - **macOS**: `~/Library/Application Support/com.awful-sec.aj`
 /// - **Linux**: `~/.config/aj`
-/// - **Windows**: `%APPDATA%\awful-sec\aj`
+/// - **Windows**: `%APPDATA%\\awful-sec\\aj`
 ///
 /// This location is used for `config.yaml`, the `templates/` folder, the
-/// per-session vector store YAMLs, and the downloaded `all-mini-lm-l12-v2` model.
+/// per-session vector store YAMLs, and the downloaded `all-MiniLM-L6-v2` model.
 ///
 /// # Returns
 /// Absolute path to the config directory.

@@ -63,7 +63,7 @@
 /// // Ask once (non-streaming):
 /// let rt = tokio::runtime::Runtime::new().unwrap();
 /// rt.block_on(async {
-///     let _ = api::ask(&cfg, "Hello".into(), &tpl, None, None).await.unwrap();
+///     let _ = api::ask(&cfg, "Hello".into(), &tpl, None, None, false).await.unwrap();
 /// });
 /// # Ok(()) }
 /// ```
@@ -87,11 +87,13 @@ use async_openai::{
 };
 use crossterm::{
     ExecutableCommand,
-    cursor::MoveTo,
+    cursor::{MoveTo, MoveUp},
     style::{Attribute, Color, Print, SetAttribute, SetForegroundColor},
+    terminal::{Clear, ClearType, size},
 };
 use futures::StreamExt;
 use hora::core::{ann_index::ANNIndex, node::Node};
+use indicatif::{ProgressBar, ProgressStyle};
 use std::{
     env,
     error::Error,
@@ -170,6 +172,7 @@ pub async fn stream_response<'a>(
     template: &ChatTemplate,
     mut vector_store: Option<&mut VectorStore>,
     _brain: Option<&mut Brain<'a>>,
+    pretty: bool,
 ) -> Result<ChatCompletionRequestMessage, Box<dyn Error>> {
     while session_messages.should_eject_message() {
         if !session_messages.conversation_messages.is_empty() {
@@ -247,50 +250,138 @@ pub async fn stream_response<'a>(
 
     let mut response_string = String::new();
 
+    // Show waiting spinner
+    let waiting_pb = ProgressBar::new_spinner();
+    waiting_pb.set_style(
+        ProgressStyle::with_template("{spinner:.yellow} {msg}")
+            .unwrap()
+            .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
+    );
+    waiting_pb.enable_steady_tick(Duration::from_millis(80));
+    waiting_pb.set_message("Waiting for response...");
+
     let mut stream = client.chat().create_stream(request).await?;
-    let mut lock = stdout().lock();
-    let mut stdout = std::io::stdout();
-    stdout.execute(SetForegroundColor(Color::Yellow))?;
-    stdout.execute(SetAttribute(Attribute::Bold))?;
 
-    let mut in_think_block = false;
+    // Clear the waiting spinner once we have the stream
+    waiting_pb.finish_and_clear();
 
-    while let Some(result) = stream.next().await {
-        match result {
-            Ok(response) => {
-                debug!("Received response: {:?}", response);
-                response.choices.iter().for_each(|chat_choice| {
-                    if let Some(ref content) = chat_choice.delta.content {
-                        response_string.push_str(content);
-                        
-                        // Check for <think> tag to enter think mode
-                        if content.contains("<think>") {
-                            in_think_block = true;
-                            stdout.execute(SetForegroundColor(Color::DarkGrey)).unwrap();
-                        }
-                        
-                        write!(lock, "{content}").unwrap();
-                        
-                        // Check for </think> tag to exit think mode
-                        if content.contains("</think>") {
-                            in_think_block = false;
-                            stdout.execute(SetForegroundColor(Color::Yellow)).unwrap();
+    if pretty {
+        // Stream raw text first, then replace with pretty-rendered version
+        let (terminal_cols, _) = size().unwrap_or((80, 24)); // Default to 80 cols if size fails
+        let mut lines_printed = 0u16; // Track number of complete lines
+        let mut current_col = 0u16;
+
+        let mut lock = stdout().lock();
+        let mut stdout = std::io::stdout();
+        stdout.execute(SetForegroundColor(Color::Yellow))?;
+        stdout.execute(SetAttribute(Attribute::Bold))?;
+
+        while let Some(result) = stream.next().await {
+            match result {
+                Ok(response) => {
+                    debug!("Received response: {:?}", response);
+                    for chat_choice in response.choices.iter() {
+                        if let Some(ref content) = chat_choice.delta.content {
+                            response_string.push_str(content);
+
+                            // Track lines by simulating terminal cursor position
+                            for ch in content.chars() {
+                                if ch == '\n' {
+                                    lines_printed += 1;
+                                    current_col = 0;
+                                } else if ch == '\r' {
+                                    current_col = 0;
+                                } else {
+                                    current_col += 1;
+                                    // Handle wrapping when we exceed terminal width
+                                    if current_col >= terminal_cols {
+                                        lines_printed += 1;
+                                        current_col = 0;
+                                    }
+                                }
+                            }
+
+                            write!(lock, "{content}").unwrap();
                         }
                     }
-                });
+                }
+                Err(err) => {
+                    error!("Received error: {}", err);
+                    let error_msg = format!("error: {err}\n");
+                    lines_printed += 1;
+                    current_col = 0;
+                    write!(lock, "{}", error_msg).unwrap();
+                }
             }
-            Err(err) => {
-                error!("Received error: {}", err);
-                writeln!(lock, "error: {err}").unwrap();
-            }
+            stdout.flush()?;
         }
-        stdout.flush()?;
+
+        stdout.execute(SetAttribute(Attribute::Reset))?;
+        stdout.execute(SetForegroundColor(Color::Reset))?;
+
+        // If we're not at column 0, we need to count the current partial line
+        if current_col > 0 {
+            writeln!(lock)?; // Move to next line
+            lines_printed += 1;
+        }
+
+        drop(lock);
+
+        // Now clear the streamed output and render pretty version
+        if lines_printed > 0 {
+            stdout.execute(MoveUp(lines_printed))?;
+            stdout.execute(Clear(ClearType::FromCursorDown))?;
+        }
+
+        // Render the complete response with pretty formatting
+        crate::pretty::print_pretty(&response_string)?;
+        println!(); // Add newline after response
+    } else {
+        // Plain streaming output
+        let mut lock = stdout().lock();
+        let mut stdout = std::io::stdout();
+        stdout.execute(SetForegroundColor(Color::Yellow))?;
+        stdout.execute(SetAttribute(Attribute::Bold))?;
+
+        let mut in_think_block = false;
+
+        while let Some(result) = stream.next().await {
+            match result {
+                Ok(response) => {
+                    debug!("Received response: {:?}", response);
+                    response.choices.iter().for_each(|chat_choice| {
+                        if let Some(ref content) = chat_choice.delta.content {
+                            response_string.push_str(content);
+
+                            // Check for <think> tag to enter think mode
+                            if content.contains("<think>") {
+                                in_think_block = true;
+                                stdout.execute(SetForegroundColor(Color::DarkGrey)).unwrap();
+                            }
+
+                            write!(lock, "{content}").unwrap();
+
+                            // Check for </think> tag to exit think mode
+                            if content.contains("</think>") {
+                                in_think_block = false;
+                                stdout.execute(SetForegroundColor(Color::Yellow)).unwrap();
+                            }
+                        }
+                    });
+                }
+                Err(err) => {
+                    error!("Received error: {}", err);
+                    writeln!(lock, "error: {err}").unwrap();
+                }
+            }
+            stdout.flush()?;
+        }
+
+        stdout.execute(SetAttribute(Attribute::Reset))?;
+        stdout.execute(SetForegroundColor(Color::Reset))?;
+
+        drop(lock);
     }
-
-    stdout.execute(SetAttribute(Attribute::Reset))?;
-    stdout.execute(SetForegroundColor(Color::Reset))?;
-
-    drop(lock);
 
     let chat_completion_request_assistant_content =
         ChatCompletionRequestAssistantMessageContent::Text(response_string.clone());
@@ -324,6 +415,7 @@ pub async fn fetch_response<'a>(
     template: &ChatTemplate,
     mut vector_store: Option<&mut VectorStore>,
     _brain: Option<&mut Brain<'a>>,
+    _pretty: bool,
 ) -> Result<ChatCompletionRequestMessage, Box<dyn Error>> {
     while session_messages.should_eject_message() {
         if !session_messages.conversation_messages.is_empty() {
@@ -408,7 +500,20 @@ pub async fn fetch_response<'a>(
 
     let mut response_string = String::new();
 
+    // Show waiting spinner
+    let waiting_pb = ProgressBar::new_spinner();
+    waiting_pb.set_style(
+        ProgressStyle::with_template("{spinner:.yellow} {msg}")
+            .unwrap()
+            .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
+    );
+    waiting_pb.enable_steady_tick(Duration::from_millis(80));
+    waiting_pb.set_message("Waiting for response...");
+
     let response = client.chat().create(request).await?;
+
+    // Clear the waiting spinner once we have the response
+    waiting_pb.finish_and_clear();
 
     response.choices.iter().for_each(|chat_choice| {
         let message = chat_choice.message.clone();
@@ -462,7 +567,7 @@ use crate::api::ChatCompletionRequestAssistantMessageContent::Text;
 /// ```no_run
 /// # async fn demo(cfg: awful_aj::config::AwfulJadeConfig, tpl: awful_aj::template::ChatTemplate)
 /// # -> Result<(), Box<dyn std::error::Error>> {
-/// let answer = awful_aj::api::ask(&cfg, "Ping?".into(), &tpl, None, None).await?;
+/// let answer = awful_aj::api::ask(&cfg, "Ping?".into(), &tpl, None, None, false).await?;
 /// println!("assistant: {answer}");
 /// # Ok(()) }
 /// ```
@@ -473,6 +578,7 @@ pub async fn ask<'a>(
     template: &ChatTemplate,
     vector_store: Option<&mut VectorStore>,
     mut brain: Option<&mut Brain<'a>>,
+    pretty: bool,
 ) -> Result<String, Box<dyn Error>> {
     let client = create_client(config)?;
     let mut session_messages = get_session_messages(&brain, config, template, &question).unwrap();
@@ -511,6 +617,7 @@ pub async fn ask<'a>(
                 template,
                 vector_store,
                 brain,
+                pretty,
             )
             .await?
         }
@@ -523,6 +630,7 @@ pub async fn ask<'a>(
                 template,
                 vector_store,
                 brain,
+                pretty,
             )
             .await?
         }
@@ -626,6 +734,16 @@ pub fn add_memories_to_brain(
     brain: &mut Option<&mut Brain>,
 ) -> Result<(), Box<dyn Error>> {
     if let Some(vector_store) = vector_store {
+        // Show searching spinner
+        let memory_pb = ProgressBar::new_spinner();
+        memory_pb.set_style(
+            ProgressStyle::with_template("{spinner:.magenta} {msg}")
+                .unwrap()
+                .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
+        );
+        memory_pb.enable_steady_tick(Duration::from_millis(80));
+        memory_pb.set_message("🔍 Searching memories...");
+
         // Embed the user's input
         let vector = vector_store.embed_text_to_vector(question)?;
 
@@ -637,11 +755,15 @@ pub fn add_memories_to_brain(
             (node.vectors().clone(), *node.idx(), distance)
         });
 
+        let mut memories_added = 0;
+
         for (_vector, id, euclidean_distance) in neighbor_vec_distances {
             if let Some(neighbor_content) = vector_store.get_content_by_id(id.unwrap()) {
                 if let Some(brain) = brain {
                     if euclidean_distance < 1.0 {
+                        tracing::debug!("Memory: Adding memory with distance {}", euclidean_distance);
                         brain.add_memory((*neighbor_content).clone(), session_messages);
+                        memories_added += 1;
                     }
                 }
             }
@@ -649,6 +771,18 @@ pub fn add_memories_to_brain(
 
         if let Some(brain) = brain {
             session_messages.preamble_messages = brain.build_preamble().unwrap();
+        }
+
+        // Update spinner with result
+        if memories_added > 0 {
+            memory_pb.finish_with_message(format!(
+                "🧠 {} session memor{} injected",
+                memories_added,
+                if memories_added == 1 { "y" } else { "ies" }
+            ));
+            tracing::info!("Memory: Injected {} memories into brain", memories_added);
+        } else {
+            memory_pb.finish_and_clear();
         }
     }
 
@@ -888,6 +1022,7 @@ pub async fn interactive_mode<'a>(
     mut vector_store: VectorStore,
     mut brain: Brain<'a>,
     template: &ChatTemplate,
+    pretty: bool,
 ) -> Result<(), Box<dyn Error>> {
     // Display existing conversation history, or start a new conversation
     println!("Conversation: {}", config.session_name.clone().unwrap());
@@ -958,21 +1093,66 @@ pub async fn interactive_mode<'a>(
             .push(chat_completion_message);
 
         // Get the AI's response using the OpenAI API
-        let assistant_response = match stream_response(
-            &client,
-            config.model.clone(),
-            &mut session_messages,
-            config,
-            template,
-            Some(&mut vector_store),
-            Some(&mut brain),
-        )
-        .await
-        {
-            Ok(response) => response,
-            Err(e) => {
-                eprintln!("Error: {e}");
-                continue; // This will skip the current iteration of the loop and proceed to the next one
+        let assistant_response = match config.should_stream {
+            Some(true) => {
+                match stream_response(
+                    &client,
+                    config.model.clone(),
+                    &mut session_messages,
+                    config,
+                    template,
+                    Some(&mut vector_store),
+                    Some(&mut brain),
+                    pretty,
+                )
+                .await
+                {
+                    Ok(response) => response,
+                    Err(e) => {
+                        eprintln!("Error: {e}");
+                        continue;
+                    }
+                }
+            }
+            Some(false) | None => {
+                match fetch_response(
+                    &client,
+                    config.model.clone(),
+                    &mut session_messages,
+                    config,
+                    template,
+                    Some(&mut vector_store),
+                    Some(&mut brain),
+                    pretty,
+                )
+                .await
+                {
+                    Ok(response) => {
+                        // Print the response since fetch_response doesn't print it
+                        if let ChatCompletionRequestMessage::Assistant(ref msg) = response {
+                            if let Some(ChatCompletionRequestAssistantMessageContent::Text(ref text)) = msg.content {
+                                if pretty {
+                                    // Use pretty printer for markdown formatting and syntax highlighting
+                                    println!(); // Newline before response
+                                    crate::pretty::print_pretty(text)?;
+                                } else {
+                                    // Plain output
+                                    let mut out = std::io::stdout();
+                                    out.execute(SetForegroundColor(Color::Yellow))?;
+                                    out.execute(SetAttribute(Attribute::Bold))?;
+                                    println!("\n{}", text);
+                                    out.execute(SetAttribute(Attribute::Reset))?;
+                                    out.execute(SetForegroundColor(Color::Reset))?;
+                                }
+                            }
+                        }
+                        response
+                    }
+                    Err(e) => {
+                        eprintln!("Error: {e}");
+                        continue;
+                    }
+                }
             }
         };
 
@@ -1082,6 +1262,4 @@ mod tests {
             session_messages.preamble_messages.len() + session_messages.conversation_messages.len();
         assert_eq!(message_count, 4, "Unexpected number of messages");
     }
-
-    // Add more specific test cases to handle different scenarios and edge cases
 }

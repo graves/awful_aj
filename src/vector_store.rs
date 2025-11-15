@@ -1,39 +1,243 @@
-//! # VectorStore
+//! # Semantic Memory with HNSW Vector Search
 //!
-//! Persistent embedding database for Awful Jade.
+//! This module implements **Awful Jade's long-term semantic memory system** using
+//! HNSW (Hierarchical Navigable Small World) approximate nearest neighbor search
+//! combined with sentence embeddings. It enables efficient semantic similarity
+//! search over conversation history and documents.
 //!
-//! This module provides a wrapper around a [HNSW](https://arxiv.org/abs/1603.09320)
-//! approximate nearest-neighbor index (`hora` crate) plus a sentence embedding
-//! model using Candle (pure Rust ML framework). It embeds text into 384-d vectors,
-//! stores vectors with an ID↔memory mapping, and performs fast semantic lookups.
+//! ## Overview
 //!
-//! ## Responsibilities
-//! - **Embedding**: Uses all-MiniLM-L6-v2 model via Candle to convert text into vectors.
-//! - **Indexing**: Maintains a HNSW index for ANN queries.
-//! - **Persistence**: Dumps the index to a binary file and metadata to YAML.
-//! - **Association**: Links each vector to a [`Memory`](crate::brain::Memory).
+//! The vector store provides three core capabilities:
 //!
-//! ## Serialization layout
-//! - YAML contains: index snapshot (via `hora`), `dimension`, `current_id`,
-//!   `id_to_memory`, and a stable `uuid`.
-//! - The model is reloaded from cache when deserializing.
+//! 1. **Text Embedding**: Convert text to 384-dimensional vectors using `all-MiniLM-L6-v2`
+//! 2. **Similarity Search**: Fast approximate nearest neighbor lookup via HNSW index
+//! 3. **Persistence**: Save/load index and memory mappings to disk
 //!
-//! ## Quick Example
+//! ## Architecture
+//!
+//! ```text
+//! ┌─────────────────────────────────────────────────────────┐
+//! │                    VectorStore                           │
+//! │                                                          │
+//! │  ┌────────────────────┐        ┌────────────────────┐  │
+//! │  │  Embedding Model   │        │   HNSW Index       │  │
+//! │  │  (all-MiniLM-L6)   │        │   (hora crate)     │  │
+//! │  └────────┬───────────┘        └─────────┬──────────┘  │
+//! │           │                               │             │
+//! │           ▼                               ▼             │
+//! │    Text → [384-d vector] ──────→  [ID, distance]       │
+//! │                                           │             │
+//! │                                           ▼             │
+//! │                              ┌────────────────────────┐ │
+//! │                              │   ID → Memory Map      │ │
+//! │                              │   HashMap<usize, Mem>  │ │
+//! │                              └────────────────────────┘ │
+//! └─────────────────────────────────────────────────────────┘
+//! ```
+//!
+//! ## Core Components
+//!
+//! ### [`VectorStore`]
+//!
+//! The main facade that combines embedding, indexing, and retrieval:
+//!
+//! - **Embedding**: `embed_text_to_vector()` converts strings to vectors
+//! - **Indexing**: `add_vector_with_content()` stores vectors with associated memories
+//! - **Search**: `search()` finds k-nearest neighbors by Euclidean distance
+//! - **Persistence**: `serialize()`/`from_serialized()` for disk storage
+//!
+//! ### [`SentenceEmbeddingsModel`]
+//!
+//! Pure Rust sentence transformer using Candle ML framework:
+//!
+//! - Model: `all-MiniLM-L6-v2` (BERT-based)
+//! - Dimensions: 384
+//! - Size: ~90MB
+//! - Pooling: Mean pooling with L2 normalization
+//!
+//! ### HNSW Index
+//!
+//! Hierarchical graph structure from `hora` crate:
+//!
+//! - **Algorithm**: HNSW (state-of-the-art ANN)
+//! - **Metric**: Euclidean distance
+//! - **Complexity**: O(log N) search time
+//! - **Parameters**: M=12, ef_construction=200 (default)
+//!
+//! ## Embedding Model Details
+//!
+//! The `all-MiniLM-L6-v2` model is automatically downloaded from HuggingFace Hub
+//! on first use. It's a distilled BERT model optimized for semantic similarity:
+//!
+//! | Property | Value |
+//! |----------|-------|
+//! | Architecture | BERT (6 layers) |
+//! | Parameters | 22.7M |
+//! | Embedding Size | 384 dimensions |
+//! | Max Sequence Length | 512 tokens |
+//! | Training | Sentence transformers distillation |
+//! | Performance | ~85% of full BERT at 10% size |
+//!
+//! **Cache Location**: HuggingFace Hub cache (`~/.cache/huggingface/hub/` on Linux/macOS)
+//!
+//! ## Persistence Format
+//!
+//! The vector store serializes to two files in the config directory:
+//!
+//! ```text
+//! <config_dir>/<session_hash>_vector_store.yaml   # Metadata + ID→Memory map
+//! <config_dir>/<session_hash>_hnsw_index.bin      # Binary HNSW graph
+//! ```
+//!
+//! The YAML file contains:
+//! - `dimension`: Vector dimensionality (384)
+//! - `current_id`: Next available ID
+//! - `id_to_memory`: HashMap of ID → [`Memory`](crate::brain::Memory)
+//! - `uuid`: Session identifier (hash of session name)
+//!
+//! The binary file contains the HNSW index structure (serialized via `hora`).
+//!
+//! ## Usage Patterns
+//!
+//! ### Creating and Populating a Vector Store
+//!
 //! ```no_run
 //! use awful_aj::vector_store::VectorStore;
 //! use awful_aj::brain::Memory;
 //! use async_openai::types::Role;
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let mut vs = VectorStore::new(384, "session_name".to_string())?;
-//! let v = vs.embed_text_to_vector("Rust is great!")?;
-//! vs.add_vector_with_content(v, Memory::new(Role::User, "Rust is great!".into()))?;
+//! // Create new vector store for session
+//! let mut vs = VectorStore::new(384, "my-session".to_string())?;
+//!
+//! // Add memories with automatic embedding
+//! let text1 = "Rust is a systems programming language";
+//! let vec1 = vs.embed_text_to_vector(text1)?;
+//! vs.add_vector_with_content(
+//!     vec1,
+//!     Memory::new(Role::User, text1.to_string())
+//! )?;
+//!
+//! let text2 = "HNSW is a graph-based ANN algorithm";
+//! let vec2 = vs.embed_text_to_vector(text2)?;
+//! vs.add_vector_with_content(
+//!     vec2,
+//!     Memory::new(Role::Assistant, text2.to_string())
+//! )?;
+//!
+//! // Build index (required before search)
 //! vs.build()?;
-//! let q = vs.embed_text_to_vector("I love Rust!")?;
-//! let ids = vs.search(&q, 1)?;
-//! println!("Top match IDs: {ids:?}");
-//! # Ok(()) }
+//!
+//! // Persist to disk
+//! let path = std::path::PathBuf::from("vector_store.yaml");
+//! vs.serialize(&path, "my-session".to_string())?;
+//! # Ok(())
+//! # }
 //! ```
+//!
+//! ### Semantic Search
+//!
+//! ```no_run
+//! # use awful_aj::vector_store::VectorStore;
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # let mut vs = VectorStore::new(384, "my-session".to_string())?;
+//! # vs.build()?;
+//! // Search for similar memories
+//! let query = "What is Rust?";
+//! let query_vec = vs.embed_text_to_vector(query)?;
+//! let top_ids = vs.search(&query_vec, 5)?; // Get top 5 matches
+//!
+//! // Retrieve associated memories
+//! for id in top_ids {
+//!     if let Some(memory) = vs.get_content_by_id(id) {
+//!         println!("Match {}: {}", id, memory.content);
+//!     }
+//! }
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ### Loading from Disk
+//!
+//! Loading a vector store requires deserializing the YAML metadata and loading
+//! the binary HNSW index. Use `VectorStore::from_serialized()` with the appropriate
+//! parameters from the YAML file.
+//!
+//! ```no_run
+//! use awful_aj::vector_store::VectorStore;
+//!
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! // Create a new vector store for this session
+//! let mut vs = VectorStore::new(384, "my-session".to_string())?;
+//!
+//! // After populating and building the index, it can be searched
+//! let query_vec = vs.embed_text_to_vector("example query")?;
+//! let results = vs.search(&query_vec, 3)?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Integration with Brain
+//!
+//! The vector store works alongside the [`Brain`](crate::brain::Brain) to provide
+//! a two-tier memory system:
+//!
+//! ```text
+//! User Query
+//!     │
+//!     ▼
+//! VectorStore.search()  ← Semantic search in long-term memory
+//!     │
+//!     ▼
+//! Top-K relevant memories
+//!     │
+//!     ▼
+//! Brain.add_memory()    ← Inject into working memory
+//!     │
+//!     ▼
+//! LLM with enriched context
+//! ```
+//!
+//! ## Performance Characteristics
+//!
+//! | Operation | Time Complexity | Notes |
+//! |-----------|----------------|-------|
+//! | `embed_text_to_vector()` | O(n) | n = text length, ~20-50ms |
+//! | `add_vector_with_content()` | O(1) | Constant time insertion |
+//! | `build()` | O(N log N) | N = total vectors |
+//! | `search()` | O(log N) | HNSW approximate search |
+//! | `serialize()` | O(N) | Linear in index size |
+//!
+//! **Memory Usage**: ~1KB per stored vector (384 floats + metadata)
+//!
+//! ## Similarity Thresholds
+//!
+//! The HNSW index uses **Euclidean distance** as the similarity metric. After
+//! L2 normalization, typical distance ranges:
+//!
+//! - **< 0.3**: Very similar (near-duplicates)
+//! - **0.3 - 0.7**: Semantically related
+//! - **0.7 - 1.0**: Loosely related
+//! - **> 1.0**: Unrelated
+//!
+//! The search doesn't apply a distance threshold—it returns the k-nearest neighbors
+//! regardless of absolute distance. Callers can filter results by distance if needed.
+//!
+//! ## Error Handling
+//!
+//! Most methods return `Result<T, Box<dyn Error>>` to propagate various error types:
+//!
+//! - **Model loading errors**: Network issues, cache corruption
+//! - **Embedding errors**: Text too long (> 512 tokens), encoding failures
+//! - **Index errors**: Build before search, invalid dimensionality
+//! - **I/O errors**: Disk full, permission denied during serialization
+//!
+//! ## See Also
+//!
+//! - [`crate::brain::Brain`] - Short-term working memory
+//! - [`crate::brain::Memory`] - Memory items stored in the index
+//! - [HNSW Paper](https://arxiv.org/abs/1603.09320) - Algorithm details
+//! - [all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2) - Model card
 
 use candle_core::{DType, Device, Tensor};
 use candle_nn::VarBuilder;
@@ -43,10 +247,12 @@ use hora::core::ann_index::{ANNIndex, SerializableIndex};
 use hora::core::metrics::Metric;
 use hora::index::hnsw_idx::HNSWIndex;
 use hora::index::hnsw_params::HNSWParams;
+use indicatif::{ProgressBar, ProgressStyle};
 use serde::{Serialize, Serializer, ser::SerializeStruct};
 use std::collections::HashMap;
 use std::error::Error;
 use std::path::PathBuf;
+use std::time::Duration;
 use tokenizers::Tokenizer;
 
 use crate::brain::Memory;
@@ -62,31 +268,46 @@ pub struct SentenceEmbeddingsModel {
 impl SentenceEmbeddingsModel {
     /// Load the model from Hugging Face Hub
     pub fn load() -> Result<Self, Box<dyn Error>> {
+        let pb = ProgressBar::new_spinner();
+        pb.set_style(
+            ProgressStyle::with_template("{spinner:.cyan} {msg}")
+                .unwrap()
+                .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
+        );
+        pb.enable_steady_tick(Duration::from_millis(80));
+
         let device = Device::Cpu;
         let model_id = "sentence-transformers/all-MiniLM-L6-v2";
         let revision = "main";
-        
+
         // Download model files from Hugging Face
         let repo = Repo::with_revision(model_id.to_string(), RepoType::Model, revision.to_string());
         let api = Api::new()?;
         let api_repo = api.repo(repo);
-        
+
+        pb.set_message("Downloading config.json...");
         let config_filename = api_repo.get("config.json")?;
+
+        pb.set_message("Downloading tokenizer.json...");
         let tokenizer_filename = api_repo.get("tokenizer.json")?;
+
+        pb.set_message("Downloading model.safetensors (~90MB)...");
         let weights_filename = api_repo.get("model.safetensors")?;
-        
-        // Load config
+
+        pb.set_message("Loading model configuration...");
         let config = std::fs::read_to_string(config_filename)?;
         let config: Config = serde_json::from_str(&config)?;
-        
-        // Load tokenizer
+
+        pb.set_message("Loading tokenizer...");
         let tokenizer = Tokenizer::from_file(tokenizer_filename)
             .map_err(|e| format!("Failed to load tokenizer: {}", e))?;
-        
-        // Load weights
+
+        pb.set_message("Loading model weights...");
         let vb = unsafe { VarBuilder::from_mmaped_safetensors(&[weights_filename], DTYPE, &device)? };
         let model = BertModel::load(vb, &config)?;
-        
+
+        pb.finish_with_message("✓ Embedding model loaded");
+
         Ok(Self {
             model,
             tokenizer,

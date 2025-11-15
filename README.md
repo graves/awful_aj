@@ -39,12 +39,15 @@ Options:
 
 ## ✨ Features
 
-- **Ask the AI**: Run `aj ask "question"` and get answers powered by your configured model.  
-- **Interactive Mode**: A REPL-style conversation with memory & vector search (your AI "remembers" past context).  
-- **Vector Store**: Uses HNSW + sentence embeddings to remember what you've said before. Basically, your AI gets a brain. 🧠  
-- **Brains with Limits**: Keeps only as many tokens as you allow. When full, it forgets the oldest stuff. (Like you after 3 AM pizza.)  
-- **Config & Templates**: YAML-driven configs and prompt templates. Customize everything, break nothing.  
-- **Auto-downloads embeddings model**: Uses Candle (pure Rust ML framework) to automatically download the `all-MiniLM-L6-v2` BERT model from HuggingFace Hub when needed.  
+- **Ask the AI**: Run `aj ask "question"` and get answers powered by your configured model.
+- **Interactive Mode**: A REPL-style conversation with memory & vector search (your AI "remembers" past context).
+- **RAG Support**: Load documents for context-aware responses with `--rag` flag. Automatic chunking, caching, and retrieval.
+- **Pretty Printing**: Beautiful markdown rendering with syntax highlighting for code blocks (`--pretty` flag).
+- **Progress Indicators**: Real-time feedback with spinners for API calls, memory search, and model loading.
+- **Vector Store**: Uses HNSW + sentence embeddings to remember what you've said before. Basically, your AI gets a brain. 🧠
+- **Brains with Limits**: Keeps only as many tokens as you allow. When full, it forgets the oldest stuff. (Like you after 3 AM pizza.)
+- **Config & Templates**: YAML-driven configs and prompt templates. Customize everything, break nothing.
+- **Auto-downloads embeddings model**: Uses Candle (pure Rust ML framework) to automatically download the `all-MiniLM-L6-v2` BERT model from HuggingFace Hub when needed.
 - **Pure Rust**: No Python dependencies! Everything runs in pure Rust using Candle for ML inference.
 
 ---
@@ -113,14 +116,20 @@ You'll get a colorful, model-dependent answer in **yellow** (or **dark gray** if
 **Options:**
 - `-t, --template <NAME>`: Use a specific template (e.g., `simple_question`)
 - `-s, --session <NAME>`: Save to a named session for context retention
-- `--one-shot`: Ignore any session configured in config.yaml (force standalone prompt)
+- `-o, --one-shot`: Ignore any session configured in config.yaml (force standalone prompt)
+- `-r, --rag <FILES>`: Comma-separated list of files to use as RAG context
+- `-k, --rag-top-k <N>`: Number of RAG chunks to retrieve (default: 3)
+- `-p, --pretty`: Enable markdown rendering with syntax highlighting
 
 **Examples:**
 ```bash
 aj ask "What is HNSW?"
 aj ask -t simple_question "Explain Rust lifetimes"
 aj ask -s my-session "Remember this: I like pizza"
-aj ask --one-shot "What's the weather?" # Ignores session from config
+aj ask -o "What's the weather?" # Ignores session from config
+aj ask -r docs.txt,notes.md -k 5 "Summarize the key points"
+aj ask -p "Explain this code" # Pretty markdown output
+aj ask -r docs/ -p -s project "What does this project do?"
 ```
 
 ![aj ask command](./bibi.gif)
@@ -146,12 +155,16 @@ _(Unlike your barista.)_
 **Options:**
 - `-t, --template <NAME>`: Use a specific template
 - `-s, --session <NAME>`: Use a named session
+- `-r, --rag <FILES>`: Comma-separated list of files for RAG context (loaded once for entire session)
+- `-k, --rag-top-k <N>`: Number of RAG chunks to retrieve (default: 3)
+- `-p, --pretty`: Enable markdown rendering with syntax highlighting for all responses
 
 **Examples:**
 ```bash
 aj interactive
 aj interactive -s my-session
 aj interactive -t reading_buddy -s book-club
+aj interactive -r docs/ -p -s project  # Interactive with RAG and pretty output
 ```
 
 ![aj interactive command](./interactive.gif)
@@ -183,7 +196,7 @@ Edit your config at:
 
 Example:
 
-```
+```yaml
 api_base: "http://localhost:1234/v1"
 api_key: "CHANGEME"
 model: "jade_qwen3_4b_mlx"
@@ -193,28 +206,58 @@ stop_words:
   - "<|im_end|>\\n<|im_start|>"
   - "<|im_start|>\n"
 session_db_url: "/Users/you/Library/Application Support/com.awful-sec.aj/aj.db"
+session_name: "default"  # Set to null for no session persistence
+should_stream: true       # Enable streaming responses
 ```
 
 ---
 
-### 6. Templates
+### 6. RAG (Retrieval-Augmented Generation)
+
+Load documents as context for your queries:
+
+```bash
+aj ask -r document.txt "What are the main points?"
+aj ask -r docs/,notes.md -k 5 "Summarize these files"
+```
+
+**How it works:**
+- Documents are automatically chunked (512 tokens, 128 overlap)
+- Chunks are embedded and cached in `~/.config/aj/rag_cache/` (or platform equivalent)
+- Top-k most relevant chunks are retrieved and injected into context
+- Cache is reused for faster subsequent queries on the same files
+
+**Cache location:**
+- macOS: `~/Library/Application Support/com.awful-sec.aj/rag_cache/`
+- Linux: `~/.config/aj/rag_cache/`
+- Windows: `%APPDATA%\com.awful-sec\aj\rag_cache\`
+
+---
+
+### 7. Templates
 
 Templates are YAML files in your config directory.
 Here's a baby template:
 
-```
+```yaml
 system_prompt: "You are Awful Jade, a helpful AI assistant programmed by Awful Security."
 messages: []
+response_format: null
+pre_user_message_content: null
+post_user_message_content: null
 ```
 
-Add more, swap them in with `--template <name>`.
+Add more, swap them in with `-t <name>` or `--template <name>`.
 
 ---
 
 ## 🧠 How it Works
 
-- **Brain**: Keeps memories in a deque, trims when it gets too wordy.
-- **VectorStore**: Embeds your inputs using `all-MiniLM-L6-v2` via Candle (pure Rust ML), saves to HNSW index.
+- **Brain**: Token-budgeted working memory with FIFO eviction. Keeps memories in a deque, trims when it gets too wordy.
+- **VectorStore**: Embeds your inputs using `all-MiniLM-L6-v2` via Candle (pure Rust ML), saves to HNSW index for semantic search.
+- **RAG System**: Intelligent document chunking (512 tokens, 128 overlap), embedding caching, and k-nearest neighbor retrieval.
+- **Pretty Printing**: Markdown rendering with syntax highlighting for 100+ languages using Syntect.
+- **Progress UI**: Real-time spinners and feedback using Indicatif (API calls, memory search, model loading).
 - **Candle**: Pure Rust ML framework from HuggingFace. Automatically downloads and caches models from HuggingFace Hub.
 - **Config**: YAML-based, sane defaults, easy to tweak.
 - **Templates**: Prompt engineering without copy-pasting into your terminal like a caveman.
@@ -250,7 +293,9 @@ But remember: with great power comes great YAML.
 
 ## 📜 License
 
-MIT. Do whatever you want, just don't blame us when your AI remembers your browser history.
+[CC-BY-SA-4.0](https://creativecommons.org/licenses/by-sa/4.0/) (Creative Commons Attribution-ShareAlike 4.0 International)
+
+Share and adapt freely, but give credit and share alike. Don't blame us when your AI remembers your browser history.
 
 ---
 

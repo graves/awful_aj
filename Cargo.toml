@@ -9,17 +9,14 @@ repository = "https://github.com/graves/awful_aj.git"
 readme = "README.md"
 homepage = "https://github.com/graves/awful_aj"
 keywords = ["openai", "chatgpt", "llm", "cli", "embeddings"]
-# Use the modern feature resolver
+
 resolver = "2"
 include = [
   "Cargo.toml",
   "README.md",
   "LICENSE*",
   "src/**",
-  # Only ship tiny, essential templates (or remove if not needed at runtime)
   "templates/*.yaml",
-  # If your library needs migrations at runtime, keep them:
-  # "migrations/*.sql",
 ]
 
 [[bin]]
@@ -40,10 +37,12 @@ reqwest = { version = "0.12.23", default-features = false, features = [
 ] }
 
 # CLI / terminal
-clap = { version = "4.4.6", features = ["derive", "color", "env"] }
+clap = { version = "4.5.51", features = ["derive", "color", "env"] }
 crossterm = "0.29.0"
 # Make sure indicatif/console-style APIs are available with std
 console = { version = "0.16", default-features = false, features = ["std", "ansi-parsing", "unicode-width"] }
+termimad = "0.34.0"
+syntect = "5.2"
 
 # Data / time / utils
 chrono = "0.4.31"
@@ -58,18 +57,22 @@ tempfile = "3.8.0"
 # Logging
 tracing = "0.1.37"
 tracing-subscriber = "0.3.17"
+indicatif = { version = "0.18.3", features = ["rayon"] }
 
 # Serialization
 serde = { version = "1.0.188", features = ["derive"] }
 serde_json = "1.0.107"
-serde_yaml = "0.9.25"
+serde_yaml = "0.9.34"
+
+blake3 = "1"
+bincode = { version = "2.0.1", features = ["serde"] }
 
 # DB
 diesel = { version = "2.2.9", features = ["sqlite", "returning_clauses_for_sqlite_3_35"] }
 rusqlite = { version = "0.37.0", features = ["bundled"] }
 
 # Tokenization
-tiktoken-rs = { version = "0.7.0", default-features = false }
+tiktoken-rs = { version = "0.9.1", default-features = false }
 
 # ANN index
 hora = "0.1.1"
@@ -85,8 +88,11 @@ tokenizers = "0.22.1"
 # Async runtime
 tokio = { version = "1.33.0", features = ["rt-multi-thread", "macros"] }
 
+# Parallel processing
+rayon = "1.10"
+
 [target.'cfg(windows)'.dependencies]
 console = { version = "0.16", default-features = true, features = ["std", "ansi-parsing", "unicode-width"] }
 
 [dev-dependencies]
-httpmock = "0.6.8"
+httpmock = "0.8.2"

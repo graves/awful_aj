@@ -42,4 +42,4 @@ Let’s grow this ecosystem together. 🌟
 
 ---
 
-> 💡 Remember: Awful Jade may have an awful name, but it’s gives good brain. What will you build with it? 🧠
+> 💡 Remember: Awful Jade may have an awful name, but it gives good brain. What will you build with it? 🧠

@@ -19,5 +19,7 @@
   - [Download](templates/download.md)
 - [Sessions](sessions.md)
 - [Memories](memories.md)
+- [RAG (Retrieval-Augmented Generation)](rag.md)
+- [Pretty Printing](pretty-printing.md)
 - [Downstream Projects](downstream-projects.md)
 - [Moldable Outputs](moldable-outputs.md)

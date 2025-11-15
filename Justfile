@@ -45,8 +45,6 @@ preflight:
 #   just release major
 release level:
 	#!/usr/bin/env nu
-	$env.LIBTORCH = '/opt/homebrew/Caskroom/miniconda/base/pkgs/pytorch-2.4.0-py3.11_0/lib/python3.11/site-packages/torch'
-	$env.DYLD_LIBRARY_PATH = $"($env.LIBTORCH)/lib"
 	just ensure-clean
 	just ensure-cargo-edit
 
@@ -91,3 +89,55 @@ publish-only:
 	just ensure-clean
 	just preflight
 	cargo publish
+
+# Rollback the most recent release (delete tag, revert version in Cargo.toml)
+# WARNING: This will delete the most recent tag locally and remotely
+rollback:
+	#!/usr/bin/env nu
+	# Get the most recent tag
+	let latest_tag = (git describe --tags --abbrev=0 | str trim)
+	print $"📌 Most recent tag: ($latest_tag)"
+
+	# Get the previous tag (second most recent)
+	let previous_tag = (git describe --tags --abbrev=0 ($latest_tag + "^") | str trim)
+	print $"📌 Previous tag: ($previous_tag)"
+
+	# Extract version from previous tag (remove 'v' prefix)
+	let previous_version = ($previous_tag | str replace 'v' '')
+
+	# Confirm with user
+	print $"⚠️  This will:"
+	print $"   1. Delete tag ($latest_tag) locally and remotely"
+	print $"   2. Revert Cargo.toml version to ($previous_version)"
+	print $"   3. Reset HEAD to the commit before ($latest_tag)"
+	print ""
+	let confirm = (input "Continue? (yes/no): ")
+
+	if ($confirm != "yes") {
+		print "❌ Rollback cancelled"
+		exit 0
+	}
+
+	# Delete the tag locally
+	print $"🗑️  Deleting local tag ($latest_tag)..."
+	git tag -d $latest_tag
+
+	# Delete the tag remotely
+	print $"🗑️  Deleting remote tag ($latest_tag)..."
+	git push origin --delete $latest_tag
+
+	# Reset to the commit before the latest tag
+	print $"⏮️  Resetting to commit before ($latest_tag)..."
+	git reset --hard HEAD~1
+
+	# Set version back to previous version
+	just ensure-cargo-edit
+	print $"🔽 Setting version back to ($previous_version)..."
+	cargo set-version $previous_version
+
+	# Commit the version change
+	git add Cargo.toml Cargo.lock
+	git commit -m $"Rollback from ($latest_tag) to ($previous_tag)"
+
+	print $"✓ Rollback complete! Version is now ($previous_version)"
+	print $"⚠️  Don't forget to push: git push origin main --force"

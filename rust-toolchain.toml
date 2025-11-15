@@ -1,6 +1,6 @@
 # rust-toolchain.toml
 [toolchain]
-channel = "1.82.0"
+channel = "nightly"
 components = ["clippy", "rustfmt"]
 targets = [
   "x86_64-unknown-linux-gnu",

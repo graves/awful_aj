@@ -12,6 +12,9 @@ aj ask "Is Bibi really from Philly?"
 - `-t, --template` <name>: Use a specific prompt template.
 - `-s, --session` <name>: Session name for long running conversations.
 - `--one-shot`: Force one-shot mode, ignoring any session configured in config.yaml.
+- `-r, --rag` <files>: Comma-separated list of plain text files for RAG (Retrieval-Augmented Generation) context.
+- `-k, --rag-top-k` <number>: Maximum number of RAG chunks to inject into the context (default: 3).
+- `-p, --pretty`: Enable pretty-printing with markdown rendering and syntax highlighting.
 
 ## 🎨 Output Colors
 - Assistant responses appear in **yellow**
@@ -21,6 +24,29 @@ aj ask "Is Bibi really from Philly?"
 - Quick facts, transformations, summaries.
 - Scriptable one‑liners in shell pipelines.
 - Modify the default template and add a session name to give your computer a personality.
+
+## 📚 Examples
+
+### Using RAG with documents
+```bash
+# Ask questions about a codebase file
+aj ask -r src/main.rs "What does this code do?"
+
+# Query multiple documents
+aj ask -r "docs/api.md,docs/tutorial.md" "How do I authenticate?"
+
+# Control chunk retrieval
+aj ask -r paper.txt -k 5 "Summarize the methodology section"
+```
+
+### Pretty-printed output
+```bash
+# Get formatted markdown and syntax-highlighted code
+aj ask -p "Show me a Rust example of error handling"
+
+# Combine with RAG for beautiful documentation answers
+aj ask -r README.md -p "Explain the installation steps"
+```
 
 ### 🙋🏻‍♀️ Help
 

@@ -10,6 +10,8 @@ Together they let AJ remember enough to be helpful, without blowing your context
 - **Index**: HNSW for fast nearest‑neighbor lookups.
 - **Policy**: Respect your token limits — prune oldest context when needed.
 
+> **Note**: This memory system is for **conversation history**. For document-based question answering (e.g., "explain this codebase"), see [RAG (Retrieval-Augmented Generation)](./rag.md), which uses a separate temporary vector store for user-provided files.
+
 ## 🔬 How it Works
 1. Your conversation text is embedded into vectors and stored.
 2. At answer time, `aj` retrieves top‑K relevant snippets.

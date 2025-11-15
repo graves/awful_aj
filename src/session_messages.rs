@@ -1,28 +1,236 @@
-//! # Session Messages Module
+//! # Session Messages - Conversation Persistence & Lifecycle Management
 //!
-//! Manages the lifecycle of chat session messages, including:
+//! This module manages the complete lifecycle of chat conversations, bridging between:
 //!
-//! - Persistence to a SQLite database (via Diesel)
-//! - Token counting (tiktoken) to enforce context budgets
-//! - Serialization to/from `async-openai` chat message types
-//! - Ejection decisions when context is too large
+//! - **In-memory chat state**: OpenAI-compatible message structures
+//! - **Persistent storage**: SQLite database via Diesel ORM
+//! - **Token budgeting**: Context window management with tiktoken
+//! - **Message ejection**: Automatic removal of old messages when context fills
 //!
-//! ## What this module owns
-//! - A `SessionMessages` struct that holds **preamble** messages (system/brain/template) and
-//!   **conversation** messages (user/assistant), plus DB connectivity and config.
-//! - Helpers to insert/query conversations and messages.
-//! - Utilities to convert to/from OpenAI chat types, and to count tokens.
+//! ## Overview
 //!
-//! ## Typical flow (high level)
-//! 1. Create `SessionMessages::new(config)`.
-//! 2. Load preamble and prior conversation from DB, or build a fresh preamble.
-//! 3. Push new user message; decide whether to stream or fetch a completion.
-//! 4. Persist assistant reply; update token counts and possibly eject old turns.
+//! [`SessionMessages`] is the primary type for managing conversation state. It maintains
+//! two separate message queues:
 //!
-//! ## Diesel schema
-//! This module expects the standard Awful Jade Diesel schema with `conversations` and `messages`
-//! tables (see `crate::schema`). A valid `session_name` must be present in
-//! `AwfulJadeConfig` to associate records.
+//! 1. **Preamble Messages**: System prompts, brain context, and template seeds that are
+//!    always included at the start of every API call
+//! 2. **Conversation Messages**: The rolling user/assistant exchange that grows over time
+//!
+//! ```text
+//! ┌─────────────────────────────────────────────────────────┐
+//! │                   SessionMessages                        │
+//! │  ┌────────────────────┐  ┌────────────────────┐         │
+//! │  │ Preamble Messages  │  │ Conversation Msgs  │         │
+//! │  │  (System/Brain)    │  │  (User/Assistant)  │         │
+//! │  │  [Always included] │  │  [Rolling window]  │         │
+//! │  └────────────────────┘  └────────────────────┘         │
+//! │              ↓                      ↓                    │
+//! │         ┌─────────────────────────────────┐             │
+//! │         │   Token Counting (tiktoken)     │             │
+//! │         │   Context Budget Enforcement    │             │
+//! │         └─────────────────────────────────┘             │
+//! │              ↓                      ↓                    │
+//! │    ┌─────────────────┐    ┌─────────────────┐          │
+//! │    │  SQLite (Read)  │    │ SQLite (Write)  │          │
+//! │    │  Load history   │    │ Persist new msg │          │
+//! │    └─────────────────┘    └─────────────────┘          │
+//! └─────────────────────────────────────────────────────────┘
+//! ```
+//!
+//! ## Core Capabilities
+//!
+//! | Feature | Implementation | Purpose |
+//! |---------|---------------|---------|
+//! | **Persistence** | Diesel ORM + SQLite | Save conversation history across sessions |
+//! | **Token Counting** | tiktoken `cl100k_base` | Measure message size for budgeting |
+//! | **Serialization** | `async-openai` types | Convert between DB models and API messages |
+//! | **Ejection Logic** | `should_eject_message()` | Decide when to remove old messages |
+//! | **Session Continuity** | `query_conversation()` | Resume conversations by session name |
+//!
+//! ## Typical Workflow
+//!
+//! ### 1. Initialize Session
+//!
+//! ```no_run
+//! use awful_aj::{config::load_config, session_messages::SessionMessages};
+//!
+//! # fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! let config = load_config("config.yaml")?;
+//! let mut session = SessionMessages::new(config);
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ### 2. Load Existing Conversation
+//!
+//! ```no_run
+//! # use awful_aj::session_messages::SessionMessages;
+//! # use awful_aj::config::AwfulJadeConfig;
+//! # fn example(mut session: SessionMessages) -> Result<(), Box<dyn std::error::Error>> {
+//! // Query conversation by session_name
+//! let conversation = session.query_conversation()?;
+//!
+//! // Load all previous messages
+//! let messages = session.query_conversation_messages(&conversation)?;
+//!
+//! println!("Loaded {} messages from session", messages.len());
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ### 3. Add New Messages
+//!
+//! ```no_run
+//! # use awful_aj::session_messages::SessionMessages;
+//! # fn example(mut session: SessionMessages) -> Result<(), Box<dyn std::error::Error>> {
+//! // Add user message
+//! session.insert_message(
+//!     "user".to_string(),
+//!     "What is HNSW?".to_string(),
+//! )?;
+//!
+//! // Add assistant response
+//! session.insert_message(
+//!     "assistant".to_string(),
+//!     "HNSW is a graph-based algorithm...".to_string(),
+//! )?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ### 4. Token Budget Management
+//!
+//! ```no_run
+//! # use awful_aj::session_messages::SessionMessages;
+//! # fn example(session: SessionMessages) {
+//! // Check if we need to eject old messages
+//! if session.should_eject_message() {
+//!     println!("Context window full - need to eject oldest messages");
+//! }
+//!
+//! // Get remaining token budget
+//! let budget = session.max_tokens();
+//! println!("Total token budget: {}", budget);
+//! # }
+//! ```
+//!
+//! ## Token Counting
+//!
+//! Token counting uses OpenAI's `cl100k_base` tokenizer (same as GPT-4, GPT-3.5-turbo):
+//!
+//! ```no_run
+//! use awful_aj::session_messages::SessionMessages;
+//! use async_openai::types::{ChatCompletionRequestMessage, Role};
+//!
+//! # fn example() {
+//! let messages = vec![
+//!     SessionMessages::serialize_chat_completion_message(
+//!         Role::User,
+//!         "What is Rust?".to_string(),
+//!     ),
+//! ];
+//!
+//! let token_count = SessionMessages::count_tokens_in_chat_completion_messages(&messages);
+//! println!("User prompt uses {} tokens", token_count);
+//! # }
+//! ```
+//!
+//! ## Ejection Strategy
+//!
+//! When the conversation exceeds the token budget, old messages must be ejected:
+//!
+//! 1. **Budget Calculation**: `context_max_tokens - assistant_minimum_context_tokens`
+//! 2. **Usage Tracking**: Sum tokens in preamble + conversation messages
+//! 3. **Ejection Trigger**: `should_eject_message()` returns `true` when budget exceeded
+//! 4. **Ejection Policy**: Typically FIFO (remove oldest conversation messages first)
+//!
+//! **Note**: Preamble messages are **never ejected** - they always stay in context.
+//!
+//! ## Database Schema
+//!
+//! This module requires the Diesel schema defined in [`crate::schema`]:
+//!
+//! | Table | Purpose | Key Fields |
+//! |-------|---------|-----------|
+//! | `conversations` | Named sessions | `id`, `session_name` |
+//! | `messages` | Individual turns | `id`, `role`, `content`, `conversation_id` |
+//!
+//! See [`crate::models`] for the ORM model definitions.
+//!
+//! ## Examples
+//!
+//! ### Complete Conversation Lifecycle
+//!
+//! ```no_run
+//! use awful_aj::{config::load_config, session_messages::SessionMessages};
+//! use async_openai::types::{ChatCompletionRequestMessage, Role};
+//!
+//! # fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! // Initialize
+//! let mut config = load_config("config.yaml")?;
+//! config.session_name = Some("research-session".to_string());
+//! let mut session = SessionMessages::new(config);
+//!
+//! // Set up preamble
+//! session.preamble_messages.push(
+//!     SessionMessages::serialize_chat_completion_message(
+//!         Role::System,
+//!         "You are a helpful research assistant.".to_string(),
+//!     ),
+//! );
+//!
+//! // Add user query
+//! session.insert_message(
+//!     "user".to_string(),
+//!     "Explain vector databases".to_string(),
+//! )?;
+//!
+//! // Simulate assistant response
+//! let assistant_reply = "Vector databases store embeddings...";
+//! session.insert_message(
+//!     "assistant".to_string(),
+//!     assistant_reply.to_string(),
+//! )?;
+//!
+//! // Check token usage
+//! if session.should_eject_message() {
+//!     println!("Need to eject old messages!");
+//! }
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ### Batch Message Persistence
+//!
+//! ```no_run
+//! # use awful_aj::session_messages::SessionMessages;
+//! # use async_openai::types::{ChatCompletionRequestMessage, Role};
+//! # fn example(mut session: SessionMessages) -> Result<(), Box<dyn std::error::Error>> {
+//! let messages = vec![
+//!     SessionMessages::serialize_chat_completion_message(
+//!         Role::User,
+//!         "First question".to_string(),
+//!     ),
+//!     SessionMessages::serialize_chat_completion_message(
+//!         Role::Assistant,
+//!         "First answer".to_string(),
+//!     ),
+//! ];
+//!
+//! // Persist all at once
+//! let persisted = session.persist_chat_completion_messages(&messages)?;
+//! println!("Persisted {} messages", persisted.len());
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## See Also
+//!
+//! - [`crate::brain`] - Working memory with token budgeting (short-term memory)
+//! - [`crate::vector_store`] - Semantic search over ejected messages (long-term memory)
+//! - [`crate::models`] - Database ORM models (`Conversation`, `Message`)
+//! - [`crate::schema`] - Auto-generated Diesel schema
+//! - [`crate::api`] - API client that consumes session messages
 
 use async_openai::types::ChatCompletionRequestAssistantMessage;
 use async_openai::types::ChatCompletionRequestAssistantMessageContent;
@@ -489,5 +697,231 @@ impl SessionMessages {
         tracing::info!("ALLOTTED TOKENS {}", self.max_tokens());
 
         session_token_count > self.max_tokens()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::AwfulJadeConfig;
+
+    /// Creates a test configuration for session messages tests
+    fn create_test_config() -> AwfulJadeConfig {
+        AwfulJadeConfig {
+            api_key: "test_key".to_string(),
+            api_base: "http://localhost:5001/v1".to_string(),
+            model: "test_model".to_string(),
+            context_max_tokens: 4096,
+            assistant_minimum_context_tokens: 1024,
+            stop_words: vec![],
+            session_db_url: ":memory:".to_string(), // Use in-memory database for tests
+            session_name: Some("test_session".to_string()),
+            should_stream: Some(false),
+        }
+    }
+
+    #[test]
+    fn test_session_messages_creation() {
+        let config = create_test_config();
+        let session = SessionMessages::new(config.clone());
+
+        assert_eq!(session.preamble_messages.len(), 0);
+        assert_eq!(session.conversation_messages.len(), 0);
+        assert_eq!(session.config.model, config.model);
+    }
+
+    #[test]
+    fn test_serialize_chat_completion_message_user() {
+        let msg = SessionMessages::serialize_chat_completion_message(
+            Role::User,
+            "Hello world".to_string(),
+        );
+
+        match msg {
+            ChatCompletionRequestMessage::User(user_msg) => {
+                if let ChatCompletionRequestUserMessageContent::Text(content) = user_msg.content {
+                    assert_eq!(content, "Hello world");
+                } else {
+                    panic!("Expected text content");
+                }
+            }
+            _ => panic!("Expected User message"),
+        }
+    }
+
+    #[test]
+    fn test_serialize_chat_completion_message_assistant() {
+        let msg = SessionMessages::serialize_chat_completion_message(
+            Role::Assistant,
+            "I can help".to_string(),
+        );
+
+        match msg {
+            ChatCompletionRequestMessage::Assistant(assistant_msg) => {
+                if let Some(ChatCompletionRequestAssistantMessageContent::Text(content)) =
+                    assistant_msg.content
+                {
+                    assert_eq!(content, "I can help");
+                } else {
+                    panic!("Expected text content");
+                }
+            }
+            _ => panic!("Expected Assistant message"),
+        }
+    }
+
+    #[test]
+    fn test_serialize_chat_completion_message_system() {
+        let msg = SessionMessages::serialize_chat_completion_message(
+            Role::System,
+            "You are helpful".to_string(),
+        );
+
+        match msg {
+            ChatCompletionRequestMessage::System(system_msg) => {
+                if let ChatCompletionRequestSystemMessageContent::Text(content) = system_msg.content
+                {
+                    assert_eq!(content, "You are helpful");
+                } else {
+                    panic!("Expected text content");
+                }
+            }
+            _ => panic!("Expected System message"),
+        }
+    }
+
+    #[test]
+    fn test_string_to_role_conversions() {
+        assert_eq!(SessionMessages::string_to_role("system"), Role::System);
+        assert_eq!(SessionMessages::string_to_role("user"), Role::User);
+        assert_eq!(SessionMessages::string_to_role("assistant"), Role::Assistant);
+    }
+
+    #[test]
+    #[should_panic(expected = "Role in message not allowed")]
+    fn test_string_to_role_invalid() {
+        SessionMessages::string_to_role("invalid_role");
+    }
+
+    #[test]
+    fn test_count_tokens_in_chat_completion_messages() {
+        let messages = vec![
+            SessionMessages::serialize_chat_completion_message(
+                Role::User,
+                "Hello".to_string(),
+            ),
+            SessionMessages::serialize_chat_completion_message(
+                Role::Assistant,
+                "Hi there!".to_string(),
+            ),
+        ];
+
+        let token_count = SessionMessages::count_tokens_in_chat_completion_messages(&messages);
+
+        // Should have some tokens (exact count depends on tiktoken)
+        assert!(token_count > 0);
+        assert!(token_count < 100); // Sanity check - these short messages shouldn't be huge
+    }
+
+    #[test]
+    fn test_count_tokens_empty_messages() {
+        let messages = vec![];
+
+        let token_count = SessionMessages::count_tokens_in_chat_completion_messages(&messages);
+
+        assert_eq!(token_count, 0);
+    }
+
+    #[test]
+    fn test_max_tokens_calculation() {
+        let config = create_test_config();
+        let session = SessionMessages::new(config);
+
+        let max = session.max_tokens();
+
+        // Should be context_max_tokens - assistant_minimum_context_tokens
+        assert_eq!(max, 4096 - 1024);
+    }
+
+    #[test]
+    fn test_should_eject_message_under_budget() {
+        let config = create_test_config();
+        let mut session = SessionMessages::new(config);
+
+        // Add a single short message
+        session.preamble_messages.push(
+            SessionMessages::serialize_chat_completion_message(
+                Role::System,
+                "Short".to_string(),
+            ),
+        );
+
+        // Should not need ejection with just one short message
+        assert!(!session.should_eject_message());
+    }
+
+    #[test]
+    fn test_should_eject_message_over_budget() {
+        let mut config = create_test_config();
+        // Set a very small token budget
+        config.context_max_tokens = 100;
+        config.assistant_minimum_context_tokens = 10;
+
+        let mut session = SessionMessages::new(config);
+
+        // Add many long messages to exceed budget
+        for i in 0..50 {
+            session.conversation_messages.push(
+                SessionMessages::serialize_chat_completion_message(
+                    Role::User,
+                    format!(
+                        "This is a long message number {} that will help us exceed the token budget",
+                        i
+                    ),
+                ),
+            );
+        }
+
+        // Should need ejection with many long messages
+        assert!(session.should_eject_message());
+    }
+
+    #[test]
+    fn test_tokens_left_before_ejection() {
+        let config = create_test_config();
+        let session = SessionMessages::new(config.clone());
+
+        let empty_messages = vec![];
+        let tokens_left = session.tokens_left_before_ejection(empty_messages);
+
+        // With no messages, should have almost all tokens available
+        // (minus preamble which is empty)
+        let expected_max = (config.context_max_tokens as isize)
+            - (config.assistant_minimum_context_tokens as isize);
+        assert_eq!(tokens_left, expected_max);
+    }
+
+    #[test]
+    fn test_serialize_chat_message_structure() {
+        let config = create_test_config();
+        let session = SessionMessages::new(config.clone());
+
+        // Create a conversation first (this would normally be done via ensure_conversation_and_config)
+        let conversation = Conversation {
+            id: Some(1),
+            session_name: "test".to_string(),
+        };
+
+        let message = SessionMessages::serialize_chat_message(
+            "user".to_string(),
+            "Test content".to_string(),
+            true,
+            &conversation,
+        );
+
+        assert_eq!(message.role, "user");
+        assert_eq!(message.content, "Test content");
+        assert_eq!(message.dynamic, true);
+        assert_eq!(message.conversation_id, Some(1));
     }
 }
