@@ -1,6 +1,6 @@
 [package]
 name = "awful_aj"
-version = "0.3.15"
+version = "0.3.11"
 edition = "2024"
 authors = ["Thomas Gentry <thomas@awfulsec.com>"]
 description = "A CLI for interacting with OpenAI compatible APIs"
