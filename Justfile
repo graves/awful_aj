@@ -107,9 +107,8 @@ rollback:
 
 	# Confirm with user
 	print $"⚠️  This will:"
-	print $"   1. Delete tag ($latest_tag) locally and remotely"
+	print $"   1. Delete tag ($latest_tag) locally"
 	print $"   2. Revert Cargo.toml version to ($previous_version)"
-	print $"   3. Reset HEAD to the commit before ($latest_tag)"
 	print ""
 	let confirm = (input "Continue? (yes/no): ")
 
@@ -121,14 +120,6 @@ rollback:
 	# Delete the tag locally
 	print $"🗑️  Deleting local tag ($latest_tag)..."
 	git tag -d $latest_tag
-
-	# Delete the tag remotely
-	print $"🗑️  Deleting remote tag ($latest_tag)..."
-	git push origin --delete $latest_tag
-
-	# Reset to the commit before the latest tag
-	print $"⏮️  Resetting to commit before ($latest_tag)..."
-	git reset --hard HEAD~1
 
 	# Set version back to previous version
 	just ensure-cargo-edit

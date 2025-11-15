@@ -1,6 +1,6 @@
 [package]
 name = "awful_aj"
-version = "0.3.10"
+version = "0.3.15"
 edition = "2024"
 authors = ["Thomas Gentry <thomas@awfulsec.com>"]
 description = "A CLI for interacting with OpenAI compatible APIs"
@@ -81,7 +81,7 @@ hora = "0.1.1"
 candle-core = "0.9.1"
 candle-nn = "0.9.1"
 candle-transformers = "0.9.1"
-hf-hub = "0.4.3"
+hf-hub = { version = "0.4.3", default-features = false, features = ["tokio", "ureq"] }
 tokenizers = "0.22.1"
 
 
@@ -96,3 +96,29 @@ console = { version = "0.16", default-features = true, features = ["std", "ansi-
 
 [dev-dependencies]
 httpmock = "0.8.2"
+
+[package.metadata.deb]
+maintainer = "Thomas Gentry <thomas@awfulsec.com>"
+copyright = "2024, Thomas Gentry <thomas@awfulsec.com>"
+license-file = ["LICENSE", "4"]
+extended-description = """\
+Awful Jade (aj) is a sophisticated command-line LLM client that combines:
+- OpenAI-compatible API support for local and remote models
+- Semantic memory with HNSW vector indexing
+- Token-budgeted working memory
+- Session persistence and conversation management
+- YAML-based templating system
+- RAG (Retrieval-Augmented Generation) with document embeddings
+- Pure Rust ML embeddings (no Python dependencies)
+"""
+depends = "libc6, libgcc-s1"
+section = "utils"
+priority = "optional"
+assets = [
+  ["target/release/aj", "usr/bin/", "755"],
+  ["README.md", "usr/share/doc/awful-aj/", "644"],
+  ["LICENSE", "usr/share/doc/awful-aj/", "644"],
+  ["templates/*.yaml", "usr/share/awful-aj/templates/", "644"],
+]
+# Configuration files that should be preserved on upgrade
+conf-files = []

@@ -1,0 +1,311 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+      version: ${{ steps.get_version.outputs.version }}
+    steps:
+      - name: Get version from tag
+        id: get_version
+        run: echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.get_version.outputs.version }}
+          release_name: Release ${{ steps.get_version.outputs.version }}
+          draft: false
+          prerelease: false
+
+  build:
+    name: Build - ${{ matrix.target }}
+    needs: create-release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux x86_64
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            cross: true
+            archive: tar.gz
+            deb: true
+
+          # Linux ARM64
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            cross: true
+            archive: tar.gz
+            deb: true
+
+          # Windows x86_64
+          - target: x86_64-pc-windows-gnu
+            os: ubuntu-latest
+            cross: true
+            archive: zip
+
+          # Windows ARM64
+          - target: aarch64-pc-windows-msvc
+            os: windows-latest
+            cross: false
+            archive: zip
+
+          # macOS x86_64
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            cross: false
+            archive: tar.gz
+
+          # macOS ARM64 (Apple Silicon)
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            cross: false
+            archive: tar.gz
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross
+        if: matrix.cross
+        uses: taiki-e/install-action@cross
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build with cross
+        if: matrix.cross
+        run: cross build --release --target ${{ matrix.target }}
+
+      - name: Build natively
+        if: ${{ !matrix.cross }}
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Install cargo-deb
+        if: matrix.deb
+        run: cargo install cargo-deb
+
+      - name: Build Debian package
+        if: matrix.deb
+        run: |
+          # cargo-deb needs the binary in target/release/ for the default target
+          # So we copy the cross-compiled binary there
+          mkdir -p target/release
+          cp "target/${{ matrix.target }}/release/aj" target/release/aj
+
+          # Build the .deb package with --no-strip to avoid cross-arch strip issues
+          cargo deb --target ${{ matrix.target }} --no-build --no-strip
+
+          # Find the generated .deb file
+          DEB_FILE=$(find target/${{ matrix.target }}/debian -name "*.deb" -type f)
+          DEB_NAME="awful-aj_${{ needs.create-release.outputs.version }}_$(echo ${{ matrix.target }} | sed 's/unknown-linux-gnu/amd64/' | sed 's/aarch64/arm64/' | sed 's/-gnu//')"
+
+          # Rename to standard naming convention
+          mv "$DEB_FILE" "${DEB_NAME}.deb"
+
+          echo "DEB_PATH=${DEB_NAME}.deb" >> $GITHUB_ENV
+          echo "DEB_NAME=${DEB_NAME}.deb" >> $GITHUB_ENV
+
+      - name: Sign macOS binary
+        if: matrix.os == 'macos-latest' && matrix.cross == false
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+          MACOS_KEYCHAIN_PWD: ${{ secrets.MACOS_KEYCHAIN_PWD }}
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+        run: |
+          if [ -n "$MACOS_CERTIFICATE" ]; then
+            # Import certificate
+            echo "$MACOS_CERTIFICATE" | base64 --decode > certificate.p12
+
+            # Create keychain
+            security create-keychain -p "$MACOS_KEYCHAIN_PWD" build.keychain
+            security default-keychain -s build.keychain
+            security unlock-keychain -p "$MACOS_KEYCHAIN_PWD" build.keychain
+            security import certificate.p12 -k build.keychain -P "$MACOS_CERTIFICATE_PWD" -T /usr/bin/codesign
+            security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$MACOS_KEYCHAIN_PWD" build.keychain
+
+            # Sign binary
+            /usr/bin/codesign --force --sign "$MACOS_SIGNING_IDENTITY" --options runtime --timestamp target/${{ matrix.target }}/release/aj
+
+            # Verify signature
+            codesign --verify --verbose target/${{ matrix.target }}/release/aj
+
+            # Clean up
+            rm certificate.p12
+            security delete-keychain build.keychain
+          else
+            echo "No macOS certificate configured, skipping signing"
+          fi
+
+      - name: Sign Windows binary
+        if: contains(matrix.target, 'windows') && matrix.cross == false
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PWD: ${{ secrets.WINDOWS_CERTIFICATE_PWD }}
+        run: |
+          if ( $env:WINDOWS_CERTIFICATE ) {
+            # Install AzureSignTool
+            dotnet tool install --global AzureSignTool
+
+            # Decode certificate
+            [IO.File]::WriteAllBytes("certificate.pfx", [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
+
+            # Sign binary
+            AzureSignTool sign -f certificate.pfx -p "$env:WINDOWS_CERTIFICATE_PWD" -tr http://timestamp.digicert.com target/${{ matrix.target }}/release/aj.exe
+
+            # Clean up
+            Remove-Item certificate.pfx
+          } else {
+            Write-Host "No Windows certificate configured, skipping signing"
+          }
+        shell: pwsh
+
+      - name: Create archive (tar.gz)
+        if: matrix.archive == 'tar.gz'
+        run: |
+          ARCHIVE_NAME="awful_aj-${{ needs.create-release.outputs.version }}-${{ matrix.target }}"
+          mkdir -p "${ARCHIVE_NAME}"
+
+          # Copy binary
+          if [ -f "target/${{ matrix.target }}/release/aj" ]; then
+            cp "target/${{ matrix.target }}/release/aj" "${ARCHIVE_NAME}/"
+          fi
+
+          # Copy additional files
+          cp README.md LICENSE "${ARCHIVE_NAME}/"
+          cp -r templates "${ARCHIVE_NAME}/"
+
+          # Create archive
+          tar -czf "${ARCHIVE_NAME}.tar.gz" "${ARCHIVE_NAME}"
+
+          echo "ASSET_PATH=${ARCHIVE_NAME}.tar.gz" >> $GITHUB_ENV
+          echo "ASSET_NAME=${ARCHIVE_NAME}.tar.gz" >> $GITHUB_ENV
+
+      - name: Create archive (zip)
+        if: matrix.archive == 'zip'
+        shell: bash
+        run: |
+          ARCHIVE_NAME="awful_aj-${{ needs.create-release.outputs.version }}-${{ matrix.target }}"
+          mkdir -p "${ARCHIVE_NAME}"
+
+          # Copy binary
+          if [ -f "target/${{ matrix.target }}/release/aj.exe" ]; then
+            cp "target/${{ matrix.target }}/release/aj.exe" "${ARCHIVE_NAME}/"
+          elif [ -f "target/${{ matrix.target }}/release/aj" ]; then
+            cp "target/${{ matrix.target }}/release/aj" "${ARCHIVE_NAME}/"
+          fi
+
+          # Copy additional files
+          cp README.md LICENSE "${ARCHIVE_NAME}/"
+          cp -r templates "${ARCHIVE_NAME}/"
+
+          # Create archive (use 7z on Windows, zip on Linux)
+          if command -v 7z &> /dev/null; then
+            7z a -tzip "${ARCHIVE_NAME}.zip" "${ARCHIVE_NAME}/"
+          else
+            zip -r "${ARCHIVE_NAME}.zip" "${ARCHIVE_NAME}"
+          fi
+
+          echo "ASSET_PATH=${ARCHIVE_NAME}.zip" >> $GITHUB_ENV
+          echo "ASSET_NAME=${ARCHIVE_NAME}.zip" >> $GITHUB_ENV
+
+      - name: Generate SHA256 checksum
+        shell: bash
+        run: |
+          if command -v shasum &> /dev/null; then
+            shasum -a 256 "${{ env.ASSET_PATH }}" > "${{ env.ASSET_PATH }}.sha256"
+          else
+            sha256sum "${{ env.ASSET_PATH }}" > "${{ env.ASSET_PATH }}.sha256"
+          fi
+
+      - name: Upload Release Asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.upload_url }}
+          asset_path: ${{ env.ASSET_PATH }}
+          asset_name: ${{ env.ASSET_NAME }}
+          asset_content_type: application/octet-stream
+
+      - name: Upload SHA256 checksum
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.upload_url }}
+          asset_path: ${{ env.ASSET_PATH }}.sha256
+          asset_name: ${{ env.ASSET_NAME }}.sha256
+          asset_content_type: text/plain
+
+      - name: Generate Debian package checksum
+        if: matrix.deb
+        shell: bash
+        run: |
+          if command -v shasum &> /dev/null; then
+            shasum -a 256 "${{ env.DEB_PATH }}" > "${{ env.DEB_PATH }}.sha256"
+          else
+            sha256sum "${{ env.DEB_PATH }}" > "${{ env.DEB_PATH }}.sha256"
+          fi
+
+      - name: Upload Debian package
+        if: matrix.deb
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.upload_url }}
+          asset_path: ${{ env.DEB_PATH }}
+          asset_name: ${{ env.DEB_NAME }}
+          asset_content_type: application/vnd.debian.binary-package
+
+      - name: Upload Debian package checksum
+        if: matrix.deb
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.upload_url }}
+          asset_path: ${{ env.DEB_PATH }}.sha256
+          asset_name: ${{ env.DEB_NAME }}.sha256
+          asset_content_type: text/plain
