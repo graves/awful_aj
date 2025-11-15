@@ -48,15 +48,15 @@ preflight:
 
 # ── Git Flow Commands ─────────────────────────────────────────────────────────
 
-# Create a new feature branch from dev
+# Create a new feature branch from develop
 feature name:
 	#!/usr/bin/env nu
 	print $"🌿 Creating feature branch: feature/{{name}}"
-	git checkout dev
-	git pull origin dev
+	git checkout develop
+	git pull origin develop
 	git checkout -b $"feature/{{name}}"
 	print "✓ Created and switched to feature/{{name}}"
-	print "💡 When done: git push -u origin feature/{{name}} and create PR to dev"
+	print "💡 When done: git push -u origin feature/{{name}} and create PR to develop"
 
 # Finish feature: push and show PR creation URL
 finish-feature:
@@ -71,23 +71,23 @@ finish-feature:
 	git push -u origin $branch
 
 	let repo = "graves/awful_aj"  # Update with your repo
-	let url = $"https://github.com/($repo)/compare/dev...($branch)?expand=1"
+	let url = $"https://github.com/($repo)/compare/develop...($branch)?expand=1"
 	print ""
 	print $"✓ Branch pushed!"
 	print $"📝 Create PR: ($url)"
 
-# Sync dev with remote
+# Sync develop with remote
 sync-dev:
 	#!/usr/bin/env nu
-	print "🔄 Syncing dev branch..."
-	git checkout dev
-	git pull origin dev
-	print "✓ dev branch updated"
+	print "🔄 Syncing develop branch..."
+	git checkout develop
+	git pull origin develop
+	print "✓ develop branch updated"
 
-# Prepare release: bump version on dev, no publish yet
+# Prepare release: bump version on develop, no publish yet
 prepare-release level:
 	#!/usr/bin/env nu
-	just ensure-branch dev
+	just ensure-branch develop
 	just ensure-clean
 	just ensure-cargo-edit
 
@@ -106,10 +106,10 @@ prepare-release level:
 	just preflight
 
 	print ""
-	print $"✓ Version bumped to ($version) on dev"
+	print $"✓ Version bumped to ($version) on develop"
 	print "📋 Next steps:"
-	print "  1. git push origin dev"
-	print "  2. Create PR: dev → main"
+	print "  1. git push origin develop"
+	print "  2. Create PR: develop → main"
 	print "  3. Merge PR (triggers GitHub Actions release)"
 
 # Convenience shorthands for prepare-release
@@ -144,8 +144,8 @@ release level:
 	#!/usr/bin/env nu
 	print "⚠️  WARNING: This command is deprecated!"
 	print "⚠️  Use the new Git Flow instead:"
-	print "    1. just prep-{{level}}      # On dev branch"
-	print "    2. Create PR dev → main"
+	print "    1. just prep-{{level}}      # On develop branch"
+	print "    2. Create PR develop → main"
 	print "    3. Merge PR (auto-releases via GitHub Actions)"
 	print "    4. just publish-crates  # On main branch"
 	print ""
