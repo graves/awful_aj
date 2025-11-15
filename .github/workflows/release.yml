@@ -19,6 +19,7 @@ jobs:
     outputs:
       upload_url: ${{ steps.create_release.outputs.upload_url }}
       version: ${{ steps.get_version.outputs.version }}
+      should_build: ${{ steps.check_tag.outputs.should_build }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -32,10 +33,15 @@ jobs:
       - name: Check if tag exists
         id: check_tag
         run: |
+          git fetch --tags
           if git rev-parse "${{ steps.get_version.outputs.version }}" >/dev/null 2>&1; then
             echo "exists=true" >> $GITHUB_OUTPUT
+            echo "should_build=false" >> $GITHUB_OUTPUT
+            echo "::warning::Tag ${{ steps.get_version.outputs.version }} already exists, skipping release"
           else
             echo "exists=false" >> $GITHUB_OUTPUT
+            echo "should_build=true" >> $GITHUB_OUTPUT
+            echo "Will create new release for ${{ steps.get_version.outputs.version }}"
           fi
 
       - name: Create and push tag
@@ -58,15 +64,10 @@ jobs:
           draft: false
           prerelease: false
 
-      - name: Skip release (tag exists)
-        if: steps.check_tag.outputs.exists == 'true'
-        run: |
-          echo "Tag ${{ steps.get_version.outputs.version }} already exists, skipping release creation"
-          exit 1
-
   build:
     name: Build - ${{ matrix.target }}
     needs: create-release
+    if: needs.create-release.outputs.should_build == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
