@@ -30,21 +30,130 @@ ensure-cargo-edit:
 		cargo install cargo-edit --quiet --force
 	}
 
+# Ensure on specific branch
+ensure-branch branch:
+	#!/usr/bin/env nu
+	let current = (git branch --show-current | str trim)
+	if ($current != "{{branch}}") {
+		print $"❌ Must be on {{branch}} branch (currently on ($current))"
+		exit 1
+	}
+	print $"✓ On {{branch}} branch"
+
 # Run quick checks before publish
 preflight:
 	cargo check
 	cargo test -q
 	cargo package -q
 
-# ── main entrypoints ──────────────────────────────────────────────────────────
+# ── Git Flow Commands ─────────────────────────────────────────────────────────
 
-# Bump {patch|minor|major|<semver>}, commit, tag, publish to crates.io, push to GitHub
-# Usage:
-#   just release patch
-#   just release minor
-#   just release major
+# Create a new feature branch from dev
+feature name:
+	#!/usr/bin/env nu
+	print $"🌿 Creating feature branch: feature/{{name}}"
+	git checkout dev
+	git pull origin dev
+	git checkout -b $"feature/{{name}}"
+	print "✓ Created and switched to feature/{{name}}"
+	print "💡 When done: git push -u origin feature/{{name}} and create PR to dev"
+
+# Finish feature: push and show PR creation URL
+finish-feature:
+	#!/usr/bin/env nu
+	let branch = (git branch --show-current | str trim)
+	if (not ($branch | str starts-with "feature/")) {
+		print "❌ Not on a feature branch"
+		exit 1
+	}
+
+	print $"🚀 Pushing ($branch)..."
+	git push -u origin $branch
+
+	let repo = "graves/awful_aj"  # Update with your repo
+	let url = $"https://github.com/($repo)/compare/dev...($branch)?expand=1"
+	print ""
+	print $"✓ Branch pushed!"
+	print $"📝 Create PR: ($url)"
+
+# Sync dev with remote
+sync-dev:
+	#!/usr/bin/env nu
+	print "🔄 Syncing dev branch..."
+	git checkout dev
+	git pull origin dev
+	print "✓ dev branch updated"
+
+# Prepare release: bump version on dev, no publish yet
+prepare-release level:
+	#!/usr/bin/env nu
+	just ensure-branch dev
+	just ensure-clean
+	just ensure-cargo-edit
+
+	# bump version
+	cargo set-version --bump {{level}}
+
+	# read bumped version
+	let version = (just version | str trim)
+	print $"🔼 Preparing release v($version)"
+
+	# commit version bump
+	git add Cargo.toml Cargo.lock
+	git commit -m $"Bump version to ($version)"
+
+	# sanity checks
+	just preflight
+
+	print ""
+	print $"✓ Version bumped to ($version) on dev"
+	print "📋 Next steps:"
+	print "  1. git push origin dev"
+	print "  2. Create PR: dev → main"
+	print "  3. Merge PR (triggers GitHub Actions release)"
+
+# Convenience shorthands for prepare-release
+prep-patch:
+	just prepare-release patch
+
+prep-minor:
+	just prepare-release minor
+
+prep-major:
+	just prepare-release major
+
+# Publish to crates.io (run after merge to main and GitHub release completes)
+publish-crates:
+	#!/usr/bin/env nu
+	just ensure-branch main
+	git pull origin main
+
+	let version = (just version | str trim)
+	print $"📦 Publishing v($version) to crates.io..."
+
+	just preflight
+	cargo publish --dry-run
+	cargo publish
+
+	print $"✓ Published v($version) to crates.io"
+
+# ── Legacy Commands (for backwards compatibility) ─────────────────────────────
+
+# OLD WORKFLOW: Bump version, tag, publish to crates.io, push (deprecated in favor of Git Flow)
 release level:
 	#!/usr/bin/env nu
+	print "⚠️  WARNING: This command is deprecated!"
+	print "⚠️  Use the new Git Flow instead:"
+	print "    1. just prep-{{level}}      # On dev branch"
+	print "    2. Create PR dev → main"
+	print "    3. Merge PR (auto-releases via GitHub Actions)"
+	print "    4. just publish-crates  # On main branch"
+	print ""
+	let confirm = (input "Continue with old workflow anyway? (yes/no): ")
+	if ($confirm != "yes") {
+		exit 0
+	}
+
 	just ensure-clean
 	just ensure-cargo-edit
 
@@ -71,10 +180,11 @@ release level:
 
 	# push branch & tag
 	print "⬆️  Pushing to GitHub…"
-	git push origin main
+	let current_branch = (git branch --show-current | str trim)
+	git push origin $current_branch
 	git push origin $"v($version)"
 
-# Convenience shorthands
+# Convenience shorthands (deprecated)
 patch:
 	just release patch
 
@@ -90,8 +200,7 @@ publish-only:
 	just preflight
 	cargo publish
 
-# Rollback the most recent release (delete tag, revert version in Cargo.toml)
-# WARNING: This will delete the most recent tag locally and remotely
+# Rollback the most recent release (delete tag locally, revert version)
 rollback:
 	#!/usr/bin/env nu
 	# Get the most recent tag
@@ -131,4 +240,6 @@ rollback:
 	git commit -m $"Rollback from ($latest_tag) to ($previous_tag)"
 
 	print $"✓ Rollback complete! Version is now ($previous_version)"
-	print $"⚠️  Don't forget to push: git push origin main --force"
+	print $"⚠️  To complete rollback:"
+	print $"   git push origin --delete ($latest_tag)  # Delete remote tag"
+	print $"   git push origin dev --force            # Push rollback commit"
