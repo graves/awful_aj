@@ -138,7 +138,7 @@ aj ask -r docs/ -p -s project "What does this project do?"
 
 ### 3. Interactive Mode
 
-Talk with the AI like it's your therapist, mentor, or rubber duck:
+Talk with the AI in an interactive REPL:
 
 ```
 aj interactive
@@ -166,8 +166,6 @@ aj interactive -s my-session
 aj interactive -t reading_buddy -s book-club
 aj interactive -r docs/ -p -s project  # Interactive with RAG and pretty output
 ```
-
-![aj interactive command](./interactive.gif)
 
 ---
 
