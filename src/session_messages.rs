@@ -655,8 +655,8 @@ impl SessionMessages {
     /// Remaining tokens (`max_tokens - used_tokens`) as `isize` (may be negative).
     pub fn tokens_left_before_ejection(&self, messages: Vec<Message>) -> isize {
         let bpe = cl100k_base().unwrap();
-        let max_tokens =
-            (self.config.context_max_tokens as isize) - (self.config.assistant_minimum_context_tokens as isize);
+        let max_tokens = (self.config.context_max_tokens as isize)
+            - (self.config.assistant_minimum_context_tokens as isize);
 
         let premable_tokens =
             Self::count_tokens_in_chat_completion_messages(&self.preamble_messages);
@@ -679,7 +679,8 @@ impl SessionMessages {
     /// # Returns
     /// The token budget as `isize`.
     pub fn max_tokens(&self) -> isize {
-        (self.config.context_max_tokens as isize) - (self.config.assistant_minimum_context_tokens as isize)
+        (self.config.context_max_tokens as isize)
+            - (self.config.assistant_minimum_context_tokens as isize)
     }
 
     /// Should we eject old messages right now?
@@ -794,7 +795,10 @@ mod tests {
     fn test_string_to_role_conversions() {
         assert_eq!(SessionMessages::string_to_role("system"), Role::System);
         assert_eq!(SessionMessages::string_to_role("user"), Role::User);
-        assert_eq!(SessionMessages::string_to_role("assistant"), Role::Assistant);
+        assert_eq!(
+            SessionMessages::string_to_role("assistant"),
+            Role::Assistant
+        );
     }
 
     #[test]
@@ -806,10 +810,7 @@ mod tests {
     #[test]
     fn test_count_tokens_in_chat_completion_messages() {
         let messages = vec![
-            SessionMessages::serialize_chat_completion_message(
-                Role::User,
-                "Hello".to_string(),
-            ),
+            SessionMessages::serialize_chat_completion_message(Role::User, "Hello".to_string()),
             SessionMessages::serialize_chat_completion_message(
                 Role::Assistant,
                 "Hi there!".to_string(),
@@ -849,12 +850,12 @@ mod tests {
         let mut session = SessionMessages::new(config);
 
         // Add a single short message
-        session.preamble_messages.push(
-            SessionMessages::serialize_chat_completion_message(
+        session
+            .preamble_messages
+            .push(SessionMessages::serialize_chat_completion_message(
                 Role::System,
                 "Short".to_string(),
-            ),
-        );
+            ));
 
         // Should not need ejection with just one short message
         assert!(!session.should_eject_message());

@@ -451,7 +451,9 @@ mod tests {
 
         if let Ok(cli) = cli {
             match cli.command {
-                Commands::Ask { template, question, .. } => {
+                Commands::Ask {
+                    template, question, ..
+                } => {
                     assert_eq!(template, Some("simple_question".to_string()));
                     assert_eq!(question, Some("What is HNSW?".to_string()));
                 }
@@ -494,7 +496,15 @@ mod tests {
 
     #[test]
     fn test_ask_command_with_rag() {
-        let args = vec!["aj", "ask", "-r", "doc1.txt,doc2.txt", "-k", "5", "Question"];
+        let args = vec![
+            "aj",
+            "ask",
+            "-r",
+            "doc1.txt,doc2.txt",
+            "-k",
+            "5",
+            "Question",
+        ];
         let cli = Cli::try_parse_from(args);
         assert!(cli.is_ok());
 

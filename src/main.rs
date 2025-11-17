@@ -69,9 +69,9 @@ use directories::ProjectDirs;
 use indicatif::{ProgressBar, ProgressStyle};
 use once_cell::sync::OnceCell;
 use rusqlite::Connection;
-use std::{env, error::Error, fs, path::PathBuf, vec};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::{env, error::Error, fs, path::PathBuf, vec};
 use tracing::{debug, info};
 
 use serde::{Deserialize, Serialize};
@@ -467,7 +467,15 @@ async fn handle_ask_command(
         }
 
         let response = if let Some(mut brain) = brain_opt {
-            api::ask(&jade_config, question, &template, None, Some(&mut brain), pretty).await?
+            api::ask(
+                &jade_config,
+                question,
+                &template,
+                None,
+                Some(&mut brain),
+                pretty,
+            )
+            .await?
         } else {
             api::ask(&jade_config, question, &template, None, None, pretty).await?
         };
@@ -549,7 +557,9 @@ async fn handle_interactive_command(
         if !context.is_empty() {
             stdout.execute(SetForegroundColor(Color::Cyan))?;
             stdout.execute(SetAttribute(Attribute::Bold))?;
-            stdout.execute(Print("✓ RAG context loaded and will be available throughout the session\n"))?;
+            stdout.execute(Print(
+                "✓ RAG context loaded and will be available throughout the session\n",
+            ))?;
             stdout.execute(SetAttribute(Attribute::Reset))?;
             stdout.execute(SetForegroundColor(Color::Reset))?;
         }

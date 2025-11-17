@@ -115,8 +115,4 @@ diesel::table! {
 diesel::joinable!(awful_configs -> conversations (conversation_id));
 diesel::joinable!(messages -> conversations (conversation_id));
 
-diesel::allow_tables_to_appear_in_same_query!(
-    awful_configs,
-    conversations,
-    messages,
-);
+diesel::allow_tables_to_appear_in_same_query!(awful_configs, conversations, messages,);

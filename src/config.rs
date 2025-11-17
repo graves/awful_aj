@@ -629,7 +629,7 @@ impl AwfulJadeConfig {
 pub fn load_config(file: &str) -> Result<AwfulJadeConfig, Box<dyn Error>> {
     let content = fs::read_to_string(file)?;
     let mut config: AwfulJadeConfig = serde_yaml::from_str(&content)?;
-    
+
     // Validate and normalize the database path
     if config.session_db_url.trim().is_empty() {
         warn!("session_db_url is empty, using default path in config directory");
@@ -637,7 +637,7 @@ pub fn load_config(file: &str) -> Result<AwfulJadeConfig, Box<dyn Error>> {
         config.session_db_url = default_db_path.to_string_lossy().to_string();
         info!("Database path set to: {}", config.session_db_url);
     }
-    
+
     Ok(config)
 }
 

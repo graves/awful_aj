@@ -253,11 +253,11 @@ use crossterm::{
 };
 use regex::Regex;
 use std::error::Error;
-use std::io::{stdout, Write};
+use std::io::{Write, stdout};
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{Style, ThemeSet};
 use syntect::parsing::SyntaxSet;
-use syntect::util::{as_24_bit_terminal_escaped, LinesWithEndings};
+use syntect::util::{LinesWithEndings, as_24_bit_terminal_escaped};
 
 /// Print markdown text with pretty formatting and syntax-highlighted code blocks.
 ///
@@ -363,14 +363,20 @@ fn print_inline_markdown(line: &str, out: &mut std::io::Stdout) -> Result<(), Bo
     for cap in inline_code_re.captures_iter(line) {
         let full_match = cap.get(0).unwrap().as_str();
         let code_text = cap.get(1).unwrap().as_str();
-        replacements.push((full_match.to_string(), format!("\x1b[33m{}\x1b[0m", code_text)));
+        replacements.push((
+            full_match.to_string(),
+            format!("\x1b[33m{}\x1b[0m", code_text),
+        ));
     }
 
     // Find bold spans
     for cap in bold_re.captures_iter(line) {
         let full_match = cap.get(0).unwrap().as_str();
         let bold_text = cap.get(1).unwrap().as_str();
-        replacements.push((full_match.to_string(), format!("\x1b[1m{}\x1b[0m", bold_text)));
+        replacements.push((
+            full_match.to_string(),
+            format!("\x1b[1m{}\x1b[0m", bold_text),
+        ));
     }
 
     // Find italic spans (but not inside bold)
@@ -379,7 +385,10 @@ fn print_inline_markdown(line: &str, out: &mut std::io::Stdout) -> Result<(), Bo
         // Skip if this is part of a bold span
         if !full_match.starts_with("**") {
             let italic_text = cap.get(1).unwrap().as_str();
-            replacements.push((full_match.to_string(), format!("\x1b[3m{}\x1b[0m", italic_text)));
+            replacements.push((
+                full_match.to_string(),
+                format!("\x1b[3m{}\x1b[0m", italic_text),
+            ));
         }
     }
 
@@ -644,7 +653,13 @@ impl PrettyPrinter {
                     let ts = ThemeSet::load_defaults();
                     let theme = &ts.themes["base16-ocean.dark"];
                     let mut out = stdout();
-                    print_code_block(&self.code_content, &self.code_language, &ps, theme, &mut out)?;
+                    print_code_block(
+                        &self.code_content,
+                        &self.code_language,
+                        &ps,
+                        theme,
+                        &mut out,
+                    )?;
 
                     self.in_code_block = false;
                     self.code_language.clear();

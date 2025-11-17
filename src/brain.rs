@@ -1319,24 +1319,27 @@ impl<'a> Brain<'a> {
 
         // Inject RAG context if available
         if let Some(ref rag_context) = self.rag_context {
-            tracing::info!("RAG context is being injected ({} characters)", rag_context.len());
+            tracing::info!(
+                "RAG context is being injected ({} characters)",
+                rag_context.len()
+            );
             tracing::debug!("RAG context content:\n{}", rag_context);
-            
+
             let rag_preamble = format!(
                 "Below is supplementary documentation that may be relevant to answering the user's question:\n\n{}",
                 rag_context
             );
-            
+
             let rag_user_message =
                 ChatCompletionRequestMessage::User(ChatCompletionRequestUserMessage {
                     content: ChatCompletionRequestUserMessageContent::Text(rag_preamble.clone()),
                     name: None,
                 });
-            
+
             tracing::debug!("Full RAG preamble being injected:\n{}", rag_preamble);
-            
+
             messages.push(rag_user_message);
-            
+
             let rag_assistant_ack =
                 ChatCompletionRequestMessage::Assistant(ChatCompletionRequestAssistantMessage {
                     content: Some(ChatCompletionRequestAssistantMessageContent::Text(
@@ -1348,7 +1351,7 @@ impl<'a> Brain<'a> {
                     tool_calls: None,
                     function_call: None,
                 });
-            
+
             messages.push(rag_assistant_ack);
         }
 
@@ -1536,8 +1539,12 @@ mod tests {
         let template = create_test_template();
         let mut brain = Brain::new(512, &template);
 
-        brain.memories.push_back(Memory::new(Role::User, "Hello".to_string()));
-        brain.memories.push_back(Memory::new(Role::Assistant, "Hi there!".to_string()));
+        brain
+            .memories
+            .push_back(Memory::new(Role::User, "Hello".to_string()));
+        brain
+            .memories
+            .push_back(Memory::new(Role::Assistant, "Hi there!".to_string()));
 
         let serialized = brain.get_serialized();
 
@@ -1606,7 +1613,10 @@ mod tests {
         for i in 0..10 {
             let memory = Memory::new(
                 Role::User,
-                format!("This is a very long message number {} that should help fill up the token budget quickly", i)
+                format!(
+                    "This is a very long message number {} that should help fill up the token budget quickly",
+                    i
+                ),
             );
             brain.add_memory(memory, &mut session);
         }

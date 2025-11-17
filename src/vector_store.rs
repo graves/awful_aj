@@ -242,7 +242,7 @@
 use candle_core::{DType, Device, Tensor};
 use candle_nn::VarBuilder;
 use candle_transformers::models::bert::{BertModel, Config, DTYPE};
-use hf_hub::{api::sync::Api, Repo, RepoType};
+use hf_hub::{Repo, RepoType, api::sync::Api};
 use hora::core::ann_index::{ANNIndex, SerializableIndex};
 use hora::core::metrics::Metric;
 use hora::index::hnsw_idx::HNSWIndex;
@@ -303,7 +303,8 @@ impl SentenceEmbeddingsModel {
             .map_err(|e| format!("Failed to load tokenizer: {}", e))?;
 
         pb.set_message("Loading model weights...");
-        let vb = unsafe { VarBuilder::from_mmaped_safetensors(&[weights_filename], DTYPE, &device)? };
+        let vb =
+            unsafe { VarBuilder::from_mmaped_safetensors(&[weights_filename], DTYPE, &device)? };
         let model = BertModel::load(vb, &config)?;
 
         pb.finish_with_message("✓ Embedding model loaded");
@@ -314,63 +315,66 @@ impl SentenceEmbeddingsModel {
             device,
         })
     }
-    
+
     /// Encode text into an embedding
     pub fn encode(&self, text: &str) -> Result<Vec<f32>, Box<dyn Error>> {
         // Tokenize with automatic truncation at 512 tokens
-        let tokens = self.tokenizer
+        let tokens = self
+            .tokenizer
             .encode(text, true)
             .map_err(|e| format!("Tokenization error: {}", e))?;
-        
-        let token_ids = Tensor::new(tokens.get_ids(), &self.device)?
-            .unsqueeze(0)?;
-        let token_type_ids = Tensor::new(tokens.get_type_ids(), &self.device)?
-            .unsqueeze(0)?;
-        
+
+        let token_ids = Tensor::new(tokens.get_ids(), &self.device)?.unsqueeze(0)?;
+        let token_type_ids = Tensor::new(tokens.get_type_ids(), &self.device)?.unsqueeze(0)?;
+
         // Run model inference
         let output = self.model.forward(&token_ids, &token_type_ids, None)?;
-        
+
         // Mean pooling
         let embedding = self.mean_pooling(&output, tokens.get_attention_mask())?;
-        
+
         // Normalize
         let embedding = self.normalize(&embedding)?;
-        
+
         // Convert to Vec<f32>
         let embedding_vec = embedding.to_vec1::<f32>()?;
-        
+
         Ok(embedding_vec)
     }
-    
+
     /// Mean pooling over token embeddings, considering attention mask
-    fn mean_pooling(&self, embeddings: &Tensor, attention_mask: &[u32]) -> Result<Tensor, Box<dyn Error>> {
+    fn mean_pooling(
+        &self,
+        embeddings: &Tensor,
+        attention_mask: &[u32],
+    ) -> Result<Tensor, Box<dyn Error>> {
         // embeddings shape: [batch_size, seq_len, hidden_size] = [1, seq_len, 384]
         // attention_mask: [seq_len]
         // We need mask shape: [1, seq_len, 1] for proper broadcasting
-        
+
         let mask = Tensor::new(attention_mask, &self.device)?
             .to_dtype(DType::F32)?
-            .unsqueeze(0)?  // [1, seq_len]
+            .unsqueeze(0)? // [1, seq_len]
             .unsqueeze(2)?; // [1, seq_len, 1]
-        
+
         // Multiply embeddings by mask (broadcasting happens automatically)
         let masked = embeddings.broadcast_mul(&mask)?;
-        
+
         // Sum across sequence dimension (dim=1)
-        let sum = masked.sum(1)?;  // [1, 384]
-        
+        let sum = masked.sum(1)?; // [1, 384]
+
         // Count valid tokens (sum mask across sequence dimension)
-        let count = mask.sum(1)?.clamp(1f32, f32::INFINITY)?;  // [1, 1]
-        
+        let count = mask.sum(1)?.clamp(1f32, f32::INFINITY)?; // [1, 1]
+
         // Divide to get mean
-        let mean = sum.broadcast_div(&count)?;  // [1, 384]
-        
+        let mean = sum.broadcast_div(&count)?; // [1, 384]
+
         // Squeeze to get [384]
         let mean = mean.squeeze(0)?;
-        
+
         Ok(mean)
     }
-    
+
     /// L2 normalize the embedding vector
     fn normalize(&self, tensor: &Tensor) -> Result<Tensor, Box<dyn Error>> {
         let norm = tensor.sqr()?.sum_all()?.sqrt()?;
@@ -386,7 +390,7 @@ impl SentenceEmbeddingsBuilder {
     pub fn local(_path: impl AsRef<std::path::Path>) -> Self {
         Self
     }
-    
+
     pub fn create_model(self) -> Result<SentenceEmbeddingsModel, Box<dyn std::error::Error>> {
         SentenceEmbeddingsModel::load()
     }
