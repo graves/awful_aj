@@ -231,7 +231,7 @@ pub async fn stream_response<'a>(
             };
 
             CreateChatCompletionRequestArgs::default()
-                .max_tokens(config.context_max_tokens as u32)
+                .max_completion_tokens(config.context_max_tokens as u32)
                 .model(model)
                 .stop(config.stop_words.clone())
                 .messages(full_conversation)
@@ -239,7 +239,7 @@ pub async fn stream_response<'a>(
                 .build()?
         }
         None => CreateChatCompletionRequestArgs::default()
-            .max_tokens(config.context_max_tokens as u32)
+            .max_completion_tokens(config.context_max_tokens as u32)
             .model(model)
             .stop(config.stop_words.clone())
             .messages(full_conversation)
@@ -481,7 +481,7 @@ pub async fn fetch_response<'a>(
             };
 
             CreateChatCompletionRequestArgs::default()
-                .max_tokens(config.context_max_tokens as u32)
+                .max_completion_tokens(config.context_max_tokens as u32)
                 .model(model)
                 .stop(config.stop_words.clone())
                 .messages(full_conversation)
@@ -489,7 +489,7 @@ pub async fn fetch_response<'a>(
                 .build()?
         }
         None => CreateChatCompletionRequestArgs::default()
-            .max_tokens(config.context_max_tokens as u32)
+            .max_completion_tokens(config.context_max_tokens as u32)
             .model(model)
             .stop(config.stop_words.clone())
             .messages(full_conversation)
