@@ -224,26 +224,25 @@ pub async fn stream_response<'a>(
     full_conversation.append(&mut session_messages.preamble_messages);
     full_conversation.append(&mut session_messages.conversation_messages);
 
+    let mut request_builder = CreateChatCompletionRequestArgs::default();
+    request_builder
+        .max_completion_tokens(config.context_max_tokens as u32)
+        .model(model)
+        .messages(full_conversation);
+
+    // Only add stop words if not empty (newer models like GPT-4.5 don't support this parameter)
+    if !config.stop_words.is_empty() {
+        request_builder.stop(config.stop_words.clone());
+    }
+
     let request = match template.response_format.clone() {
         Some(response_format_json_schema) => {
             let response_format = ResponseFormat::JsonSchema {
                 json_schema: response_format_json_schema,
             };
-
-            CreateChatCompletionRequestArgs::default()
-                .max_completion_tokens(config.context_max_tokens as u32)
-                .model(model)
-                .stop(config.stop_words.clone())
-                .messages(full_conversation)
-                .response_format(response_format)
-                .build()?
+            request_builder.response_format(response_format).build()?
         }
-        None => CreateChatCompletionRequestArgs::default()
-            .max_completion_tokens(config.context_max_tokens as u32)
-            .model(model)
-            .stop(config.stop_words.clone())
-            .messages(full_conversation)
-            .build()?,
+        None => request_builder.build()?,
     };
 
     debug!("Sending request: {:?}", request);
@@ -474,26 +473,25 @@ pub async fn fetch_response<'a>(
     full_conversation.append(&mut session_messages.preamble_messages);
     full_conversation.append(&mut session_messages.conversation_messages);
 
+    let mut request_builder = CreateChatCompletionRequestArgs::default();
+    request_builder
+        .max_completion_tokens(config.context_max_tokens as u32)
+        .model(model)
+        .messages(full_conversation);
+
+    // Only add stop words if not empty (newer models like GPT-4.5 don't support this parameter)
+    if !config.stop_words.is_empty() {
+        request_builder.stop(config.stop_words.clone());
+    }
+
     let request = match template.response_format.clone() {
         Some(response_format_json_schema) => {
             let response_format = ResponseFormat::JsonSchema {
                 json_schema: response_format_json_schema,
             };
-
-            CreateChatCompletionRequestArgs::default()
-                .max_completion_tokens(config.context_max_tokens as u32)
-                .model(model)
-                .stop(config.stop_words.clone())
-                .messages(full_conversation)
-                .response_format(response_format)
-                .build()?
+            request_builder.response_format(response_format).build()?
         }
-        None => CreateChatCompletionRequestArgs::default()
-            .max_completion_tokens(config.context_max_tokens as u32)
-            .model(model)
-            .stop(config.stop_words.clone())
-            .messages(full_conversation)
-            .build()?,
+        None => request_builder.build()?,
     };
 
     debug!("Sending request: {:?}", request);
