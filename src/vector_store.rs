@@ -796,4 +796,22 @@ mod tests {
         assert!(!neighbors.is_empty());
         Ok(())
     }
+
+    #[test]
+    fn test_vector_store_is_send_sync() {
+        fn assert_send<T: Send>() {}
+        fn assert_sync<T: Sync>() {}
+
+        assert_send::<VectorStore>();
+        assert_sync::<VectorStore>();
+    }
+
+    #[test]
+    fn test_sentence_embeddings_model_is_send_sync() {
+        fn assert_send<T: Send>() {}
+        fn assert_sync<T: Sync>() {}
+
+        assert_send::<SentenceEmbeddingsModel>();
+        assert_sync::<SentenceEmbeddingsModel>();
+    }
 }

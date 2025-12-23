@@ -412,7 +412,7 @@ async fn handle_ask_command(
         let max_brain_tokens =
             (max_brain_token_percentage * jade_config.context_max_tokens as f32) as u16;
 
-        let mut brain = Brain::new(max_brain_tokens, &template);
+        let mut brain = Brain::new(max_brain_tokens, template.clone());
 
         // Set RAG context if available
         brain.rag_context = rag_context;
@@ -424,6 +424,7 @@ async fn handle_ask_command(
             Some(&mut vector_store),
             Some(&mut brain),
             pretty,
+            true, // show_spinner
         )
         .await?;
 
@@ -461,7 +462,7 @@ async fn handle_ask_command(
     } else {
         let mut brain_opt = None;
         if rag_context.is_some() {
-            let mut brain = Brain::new(2048, &template);
+            let mut brain = Brain::new(2048, template.clone());
             brain.rag_context = rag_context;
             brain_opt = Some(brain);
         }
@@ -474,10 +475,11 @@ async fn handle_ask_command(
                 None,
                 Some(&mut brain),
                 pretty,
+                true, // show_spinner
             )
             .await?
         } else {
-            api::ask(&jade_config, question, &template, None, None, pretty).await?
+            api::ask(&jade_config, question, &template, None, None, pretty, true).await?
         };
 
         // Print response if not streaming (streaming prints inline)
@@ -593,7 +595,7 @@ async fn handle_interactive_command(
     let max_brain_token_percentage = 0.25;
     let max_brain_tokens =
         (max_brain_token_percentage * jade_config.context_max_tokens as f32) as u16;
-    let mut brain = Brain::new(max_brain_tokens, &template);
+    let mut brain = Brain::new(max_brain_tokens, template.clone());
 
     // Set RAG context if available
     brain.rag_context = rag_context;
@@ -751,6 +753,7 @@ fn main() -> io::Result<()> {
             session_db_url: db_absolute_path.to_string_lossy().to_string(),
             session_name: None,
             should_stream: None,
+            temperature: Some(0.7), // Default temperature for balanced responses
         };
         let config_yaml = serde_yaml::to_string(&config)?;
         fs::write(config_path, config_yaml)?;

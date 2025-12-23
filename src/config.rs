@@ -103,6 +103,7 @@
 //!     session_db_url: "aj.db".into(),
 //!     session_name: None,
 //!     should_stream: Some(true),
+//!     temperature: None,
 //! };
 //!
 //! // Sync to database for session tracking
@@ -128,6 +129,7 @@
 //!     session_db_url: "memory.db".into(),
 //!     session_name: Some("test-session".into()),
 //!     should_stream: Some(false),
+//!     temperature: None,
 //! };
 //! ```
 //!
@@ -191,6 +193,7 @@ use tracing::*;
 ///     session_db_url: "~/data/aj.db".into(),
 ///     session_name: Some("default".into()),
 ///     should_stream: Some(true),
+///     temperature: None,
 /// };
 /// ```
 ///
@@ -374,6 +377,29 @@ pub struct AwfulJadeConfig {
     /// local setups may have issues. If streaming fails, Awful Jade
     /// automatically falls back to non-streaming.
     pub should_stream: Option<bool>,
+
+    /// Sampling temperature for response generation.
+    ///
+    /// Controls the randomness of the model's output:
+    ///
+    /// - **0.0**: Deterministic, always picks the most likely token
+    /// - **0.7**: Balanced creativity and coherence (recommended default)
+    /// - **1.0**: More creative/random responses
+    /// - **>1.0**: Increasingly random (may produce incoherent output)
+    ///
+    /// # Default Value
+    ///
+    /// When `None`, defaults to `0.7` which works well for most coding tasks.
+    ///
+    /// # Example
+    ///
+    /// ```yaml
+    /// temperature: 0.7  # Balanced (default)
+    /// temperature: 0.0  # Deterministic
+    /// temperature: 1.0  # Creative
+    /// ```
+    #[serde(default)]
+    pub temperature: Option<f32>,
 }
 
 impl AwfulJadeConfig {
@@ -437,6 +463,7 @@ impl AwfulJadeConfig {
     ///     session_db_url: "aj.db".into(),
     ///     session_name: None,
     ///     should_stream: Some(true),
+    ///     temperature: None,
     /// };
     ///
     /// // Sync to database for "my-research" session
@@ -782,6 +809,7 @@ pub fn establish_connection(db_url: &str) -> SqliteConnection {
 ///     session_db_url: "aj.db".into(),
 ///     session_name: None,
 ///     should_stream: Some(true),
+///     temperature: None,
 /// };
 ///
 /// let db_config = AwfulConfig {

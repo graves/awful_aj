@@ -137,11 +137,12 @@
 //! #     session_db_url: "".into(),
 //! #     session_name: None,
 //! #     should_stream: None,
+//! #     temperature: None,
 //! # };
 //! let template = load_template("technical_assistant").await?;
 //!
 //! // Initialize brain with template
-//! let mut brain = Brain::new(config.context_max_tokens as u16, &template);
+//! let mut brain = Brain::new(config.context_max_tokens as u16, template);
 //!
 //! // The brain now has access to the template's system prompt and seed messages
 //! # Ok(())
@@ -581,12 +582,12 @@ pub struct ChatTemplate {
 /// #     api_key: "".into(), api_base: "".into(), model: "".into(),
 /// #     context_max_tokens: 8192, assistant_minimum_context_tokens: 2048,
 /// #     stop_words: vec![], session_db_url: "".into(),
-/// #     session_name: None, should_stream: None,
+/// #     session_name: None, should_stream: None, temperature: None,
 /// # };
 /// let template = load_template("technical_assistant").await?;
 ///
 /// // Create brain with template
-/// let mut brain = Brain::new(config.context_max_tokens as u16, &template);
+/// let mut brain = Brain::new(config.context_max_tokens as u16, template);
 ///
 /// // The brain is now initialized with the template
 /// # Ok(())

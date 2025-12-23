@@ -88,6 +88,7 @@
 //!         None, // no vector store
 //!         None, // no brain
 //!         false, // not pretty
+//!         true, // show_spinner
 //!     ).await?;
 //!
 //!     println!("{}", response);

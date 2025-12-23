@@ -50,6 +50,7 @@
 ///     session_db_url: "aj.db".into(),
 ///     session_name: None,
 ///     should_stream: Some(false),
+///     temperature: None,
 /// };
 ///
 /// let tpl = ChatTemplate {
@@ -63,7 +64,7 @@
 /// // Ask once (non-streaming):
 /// let rt = tokio::runtime::Runtime::new().unwrap();
 /// rt.block_on(async {
-///     let _ = api::ask(&cfg, "Hello".into(), &tpl, None, None, false).await.unwrap();
+///     let _ = api::ask(&cfg, "Hello".into(), &tpl, None, None, false, true).await.unwrap();
 /// });
 /// # Ok(()) }
 /// ```
@@ -125,6 +126,7 @@ use tracing::{debug, error};
 ///     session_db_url: "aj.db".into(),
 ///     session_name: None,
 ///     should_stream: Some(false),
+///     temperature: None,
 /// };
 /// let client = awful_aj::api::create_client(&cfg).unwrap();
 /// # Ok(()) }
@@ -164,15 +166,16 @@ pub fn create_client(config: &AwfulJadeConfig) -> Result<Client<OpenAIConfig>, B
 /// # Panics
 /// - Will `unwrap()` when writing to the locked stdout (operationally safe in TTYs).
 #[allow(deprecated)]
-pub async fn stream_response<'a>(
+pub async fn stream_response(
     client: &Client<OpenAIConfig>,
     model: String,
     session_messages: &mut SessionMessages,
     config: &AwfulJadeConfig,
     template: &ChatTemplate,
     mut vector_store: Option<&mut VectorStore>,
-    _brain: Option<&mut Brain<'a>>,
+    _brain: Option<&mut Brain>,
     pretty: bool,
+    show_spinner: bool,
 ) -> Result<ChatCompletionRequestMessage, Box<dyn Error>> {
     while session_messages.should_eject_message() {
         if !session_messages.conversation_messages.is_empty() {
@@ -228,7 +231,8 @@ pub async fn stream_response<'a>(
     request_builder
         .max_completion_tokens(config.context_max_tokens as u32)
         .model(model)
-        .messages(full_conversation);
+        .messages(full_conversation)
+        .temperature(config.temperature.unwrap_or(0.7));
 
     // Only add stop words if not empty (newer models like GPT-4.5 don't support this parameter)
     if !config.stop_words.is_empty() {
@@ -249,20 +253,27 @@ pub async fn stream_response<'a>(
 
     let mut response_string = String::new();
 
-    // Show waiting spinner
-    let waiting_pb = ProgressBar::new_spinner();
-    waiting_pb.set_style(
-        ProgressStyle::with_template("{spinner:.yellow} {msg}")
-            .unwrap()
-            .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
-    );
-    waiting_pb.enable_steady_tick(Duration::from_millis(80));
-    waiting_pb.set_message("Waiting for response...");
+    // Show waiting spinner (only if show_spinner is true)
+    let waiting_pb = if show_spinner {
+        let pb = ProgressBar::new_spinner();
+        pb.set_style(
+            ProgressStyle::with_template("{spinner:.yellow} {msg}")
+                .unwrap()
+                .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
+        );
+        pb.enable_steady_tick(Duration::from_millis(80));
+        pb.set_message("Waiting for response...");
+        Some(pb)
+    } else {
+        None
+    };
 
     let mut stream = client.chat().create_stream(request).await?;
 
     // Clear the waiting spinner once we have the stream
-    waiting_pb.finish_and_clear();
+    if let Some(pb) = waiting_pb {
+        pb.finish_and_clear();
+    }
 
     if pretty {
         // Stream raw text first, then replace with pretty-rendered version
@@ -406,15 +417,16 @@ pub async fn stream_response<'a>(
 /// # Errors
 /// Propagates API, I/O, embedding, and index-build errors.
 #[allow(clippy::collapsible_match, deprecated)]
-pub async fn fetch_response<'a>(
+pub async fn fetch_response(
     client: &Client<OpenAIConfig>,
     model: String,
     session_messages: &mut SessionMessages,
     config: &AwfulJadeConfig,
     template: &ChatTemplate,
     mut vector_store: Option<&mut VectorStore>,
-    _brain: Option<&mut Brain<'a>>,
+    _brain: Option<&mut Brain>,
     _pretty: bool,
+    show_spinner: bool,
 ) -> Result<ChatCompletionRequestMessage, Box<dyn Error>> {
     while session_messages.should_eject_message() {
         if !session_messages.conversation_messages.is_empty() {
@@ -477,7 +489,8 @@ pub async fn fetch_response<'a>(
     request_builder
         .max_completion_tokens(config.context_max_tokens as u32)
         .model(model)
-        .messages(full_conversation);
+        .messages(full_conversation)
+        .temperature(config.temperature.unwrap_or(0.7));
 
     // Only add stop words if not empty (newer models like GPT-4.5 don't support this parameter)
     if !config.stop_words.is_empty() {
@@ -498,20 +511,27 @@ pub async fn fetch_response<'a>(
 
     let mut response_string = String::new();
 
-    // Show waiting spinner
-    let waiting_pb = ProgressBar::new_spinner();
-    waiting_pb.set_style(
-        ProgressStyle::with_template("{spinner:.yellow} {msg}")
-            .unwrap()
-            .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
-    );
-    waiting_pb.enable_steady_tick(Duration::from_millis(80));
-    waiting_pb.set_message("Waiting for response...");
+    // Show waiting spinner (only if show_spinner is true)
+    let waiting_pb = if show_spinner {
+        let pb = ProgressBar::new_spinner();
+        pb.set_style(
+            ProgressStyle::with_template("{spinner:.yellow} {msg}")
+                .unwrap()
+                .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
+        );
+        pb.enable_steady_tick(Duration::from_millis(80));
+        pb.set_message("Waiting for response...");
+        Some(pb)
+    } else {
+        None
+    };
 
     let response = client.chat().create(request).await?;
 
     // Clear the waiting spinner once we have the response
-    waiting_pb.finish_and_clear();
+    if let Some(pb) = waiting_pb {
+        pb.finish_and_clear();
+    }
 
     response.choices.iter().for_each(|chat_choice| {
         let message = chat_choice.message.clone();
@@ -565,23 +585,26 @@ use crate::api::ChatCompletionRequestAssistantMessageContent::Text;
 /// ```no_run
 /// # async fn demo(cfg: awful_aj::config::AwfulJadeConfig, tpl: awful_aj::template::ChatTemplate)
 /// # -> Result<(), Box<dyn std::error::Error>> {
-/// let answer = awful_aj::api::ask(&cfg, "Ping?".into(), &tpl, None, None, false).await?;
+/// let answer = awful_aj::api::ask(&cfg, "Ping?".into(), &tpl, None, None, false, true).await?;
 /// println!("assistant: {answer}");
 /// # Ok(()) }
 /// ```
 #[allow(clippy::collapsible_match)]
-pub async fn ask<'a>(
+pub async fn ask(
     config: &AwfulJadeConfig,
     question: String,
     template: &ChatTemplate,
     vector_store: Option<&mut VectorStore>,
-    mut brain: Option<&mut Brain<'a>>,
+    mut brain: Option<&mut Brain>,
     pretty: bool,
+    show_spinner: bool,
 ) -> Result<String, Box<dyn Error>> {
     let client = create_client(config)?;
     let mut session_messages = get_session_messages(&brain, config, template, &question).unwrap();
+    // Pass show_spinner to control the memory search spinner
+    // When caller provides their own progress indicator (show_spinner=false), we don't show ours
     let _added_memories_to_brain_result =
-        add_memories_to_brain(&vector_store, &question, &mut session_messages, &mut brain);
+        add_memories_to_brain(&vector_store, &question, &mut session_messages, &mut brain, show_spinner);
 
     let mut question = if let Some(prepend_content) = template.pre_user_message_content.clone() {
         format!("{prepend_content} {question}")
@@ -616,6 +639,7 @@ pub async fn ask<'a>(
                 vector_store,
                 brain,
                 pretty,
+                show_spinner,
             )
             .await?
         }
@@ -629,6 +653,7 @@ pub async fn ask<'a>(
                 vector_store,
                 brain,
                 pretty,
+                show_spinner,
             )
             .await?
         }
@@ -716,12 +741,13 @@ pub fn get_session_messages(
 /// Steps:
 /// 1. Embed the query.
 /// 2. `search_nodes` for the top-3 neighbors.
-/// 3. If a neighbor’s **Euclidean distance** is `< 1.0`, add its content to the brain.
+/// 3. If a neighbor's **Euclidean distance** is `< 1.0`, add its content to the brain.
 /// 4. Rebuild the brain preamble (so it lands in the current request).
 ///
 /// # Notes
 /// - This expects the vector store to map IDs → [`Memory`].
 /// - Distance threshold (`< 1.0`) is empirical and can be tuned.
+/// - Set `show_spinner` to false when the caller provides its own progress indicator.
 ///
 /// # Errors
 /// Embedding/search errors, and preamble build errors (unlikely).
@@ -730,17 +756,23 @@ pub fn add_memories_to_brain(
     question: &str,
     session_messages: &mut SessionMessages,
     brain: &mut Option<&mut Brain>,
+    show_spinner: bool,
 ) -> Result<(), Box<dyn Error>> {
     if let Some(vector_store) = vector_store {
-        // Show searching spinner
-        let memory_pb = ProgressBar::new_spinner();
-        memory_pb.set_style(
-            ProgressStyle::with_template("{spinner:.magenta} {msg}")
-                .unwrap()
-                .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
-        );
-        memory_pb.enable_steady_tick(Duration::from_millis(80));
-        memory_pb.set_message("🔍 Searching memories...");
+        // Show searching spinner only if requested
+        let memory_pb = if show_spinner {
+            let pb = ProgressBar::new_spinner();
+            pb.set_style(
+                ProgressStyle::with_template("{spinner:.magenta} {msg}")
+                    .unwrap()
+                    .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
+            );
+            pb.enable_steady_tick(Duration::from_millis(80));
+            pb.set_message("🔍 Searching memories...");
+            Some(pb)
+        } else {
+            None
+        };
 
         // Embed the user's input
         let vector = vector_store.embed_text_to_vector(question)?;
@@ -771,16 +803,21 @@ pub fn add_memories_to_brain(
             session_messages.preamble_messages = brain.build_preamble().unwrap();
         }
 
-        // Update spinner with result
+        // Update spinner with result (only if we showed one)
+        if let Some(pb) = memory_pb {
+            if memories_added > 0 {
+                pb.finish_with_message(format!(
+                    "🧠 {} session memor{} injected",
+                    memories_added,
+                    if memories_added == 1 { "y" } else { "ies" }
+                ));
+            } else {
+                pb.finish_and_clear();
+            }
+        }
+
         if memories_added > 0 {
-            memory_pb.finish_with_message(format!(
-                "🧠 {} session memor{} injected",
-                memories_added,
-                if memories_added == 1 { "y" } else { "ies" }
-            ));
             tracing::info!("Memory: Injected {} memories into brain", memories_added);
-        } else {
-            memory_pb.finish_and_clear();
         }
     }
 
@@ -1015,10 +1052,10 @@ use std::io::Read;
 /// # Errors
 /// Propagates API, I/O, and persistence errors.
 #[allow(clippy::single_match)]
-pub async fn interactive_mode<'a>(
+pub async fn interactive_mode(
     config: &AwfulJadeConfig,
     mut vector_store: VectorStore,
-    mut brain: Brain<'a>,
+    mut brain: Brain,
     template: &ChatTemplate,
     pretty: bool,
 ) -> Result<(), Box<dyn Error>> {
@@ -1066,6 +1103,7 @@ pub async fn interactive_mode<'a>(
             &input,
             &mut session_messages,
             &mut Some(&mut brain),
+            true, // Show spinner in interactive mode
         );
 
         input = if let Some(prepend_content) = template.pre_user_message_content.clone() {
@@ -1102,6 +1140,7 @@ pub async fn interactive_mode<'a>(
                     Some(&mut vector_store),
                     Some(&mut brain),
                     pretty,
+                    true, // show_spinner
                 )
                 .await
                 {
@@ -1122,6 +1161,7 @@ pub async fn interactive_mode<'a>(
                     Some(&mut vector_store),
                     Some(&mut brain),
                     pretty,
+                    true, // show_spinner
                 )
                 .await
                 {
@@ -1205,6 +1245,7 @@ mod tests {
             session_db_url: "/Users/tg/Projects/awful_aj/test.db".to_string(),
             session_name: None,
             should_stream: None,
+            temperature: None,
         }
     }
 
@@ -1241,7 +1282,7 @@ mod tests {
     async fn test_prepare_messages() {
         setup();
         let template = mock_template();
-        let mut brain = Brain::new(8092, &template);
+        let mut brain = Brain::new(8092, template.clone());
         let config = AwfulJadeConfig {
             api_key: "".to_string(),
             api_base: "".to_string(),
@@ -1252,6 +1293,7 @@ mod tests {
             session_db_url: "".to_string(),
             session_name: None,
             should_stream: None,
+            temperature: None,
         };
         let messages = super::prepare_messages(&template, &config, Some(&&mut brain));
         assert!(messages.is_ok(), "Failed to prepare messages");

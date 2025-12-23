@@ -28,7 +28,8 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         .await
         .map_err(|e| format!("Template load error: {e}"))?;
 
-    let res = ask(config, chunk.to_string(), template, None, None).await;
+    // Parameters: config, question, template, vector_store, brain, pretty, show_spinner
+    let res = ask(config, chunk.to_string(), template, None, None, false, true).await;
 
     Ok(())
 }
@@ -66,6 +67,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         session_db_url: "aj.db".into(),     // unused when session_name is None
         session_name: None,                 // no session persistence
         should_stream: Some(false),         // non-streaming
+        temperature: None,                  // use model default
     };
 
     let tpl = ChatTemplate {
@@ -76,7 +78,8 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         post_user_message_content: None,    // optional append to user input
     };
 
-    let answer = api::ask(&cfg, "Hello from my app!".into(), &tpl, None, None).await?;
+    // Parameters: config, question, template, vector_store, brain, pretty, show_spinner
+    let answer = api::ask(&cfg, "Hello from my app!".into(), &tpl, None, None, false, true).await?;
     println!("assistant: {answer}");
 
     Ok(())
@@ -130,6 +133,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
             session_db_url: "aj.db".into(),
             session_name: Some("getting-started".into()),
             should_stream: Some(false),
+            temperature: None,
         }
     };
 
@@ -142,11 +146,11 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     };
 
     // First turn
-    let a1 = api::ask(&cfg, "Remember: my project is 'Alabaster'.".into(), &tpl, None, None).await?;
+    let a1 = api::ask(&cfg, "Remember: my project is 'Alabaster'.".into(), &tpl, None, None, false, true).await?;
     println!("assistant: {a1}");
 
     // Next turn—session context is restored from DB automatically:
-    let a2 = api::ask(&cfg, "What's the codename I told you?".into(), &tpl, None, None).await?;
+    let a2 = api::ask(&cfg, "What's the codename I told you?".into(), &tpl, None, None, false, true).await?;
     println!("assistant: {a2}");
 
     Ok(())
@@ -183,6 +187,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         session_db_url: "aj.db".into(),
         session_name: Some("mem-demo".into()),
         should_stream: Some(false),
+        temperature: None,
     };
 
     let tpl = ChatTemplate {
@@ -194,7 +199,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     };
 
     // Create a brain that will reserve a maximum of 1,024 tokens of the inference's context window.
-    let mut brain = Brain::new(1024, &tpl);
+    let mut brain = Brain::new(1024, tpl.clone());
 
     // Construct your VectorStore
     // 384 dims for MiniLM (as per your VectorStore)
@@ -222,7 +227,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     store.serialize(&yaml_path, session_name.to_string())?;
 
     // Later, a query that should recall a nearby memory (< 1.0 distance):
-    let ans = api::ask(&cfg, "Who owns the repo again?".into(), &tpl, Some(&mut store), Some(&mut brain)).await?;
+    let ans = api::ask(&cfg, "Who owns the repo again?".into(), &tpl, Some(&mut store), Some(&mut brain), false, true).await?;
     println!("assistant: {ans}");
 
     Ok(())
@@ -288,7 +293,7 @@ async fn batch_answer(
 ) -> anyhow::Result<Vec<String>> {
     let mut out = Vec::new();
     for q in questions {
-        let a = awful_aj::api::ask(cfg, q, tpl, None, None).await?;
+        let a = awful_aj::api::ask(cfg, q, tpl, None, None, false, true).await?;
         out.push(a);
     }
     Ok(out)
@@ -307,7 +312,7 @@ struct Sticky<'a> {
 
 impl<'a> Sticky<'a> {
     async fn send(&self, user_text: &str) -> anyhow::Result<String> {
-        awful_aj::api::ask(&self.cfg, user_text.into(), &self.tpl, None, None).await.map_err(Into::into)
+        awful_aj::api::ask(&self.cfg, user_text.into(), &self.tpl, None, None, false, true).await.map_err(Into::into)
     }
 }
 ```
@@ -326,7 +331,7 @@ async fn sandwich(
     let mut tpl = base_tpl.clone();
     tpl.pre_user_message_content = Some(pre.into());
     tpl.post_user_message_content = Some(post.into());
-    awful_aj::api::ask(cfg, user.into(), &tpl, None, None).await.map_err(Into::into)
+    awful_aj::api::ask(cfg, user.into(), &tpl, None, None, false, true).await.map_err(Into::into)
 }
 ```
 

@@ -49,6 +49,7 @@ Options:
 - **Config & Templates**: YAML-driven configs and prompt templates. Customize everything, break nothing.
 - **Auto-downloads embeddings model**: Uses Candle (pure Rust ML framework) to automatically download the `all-MiniLM-L6-v2` BERT model from HuggingFace Hub when needed.
 - **Pure Rust**: No Python dependencies! Everything runs in pure Rust using Candle for ML inference.
+- **Thread-Safe**: All core types (`Brain`, `VectorStore`, `SessionMessages`) are `Send + Sync`, enabling use with tokio and concurrent workloads.
 
 ---
 
@@ -206,6 +207,7 @@ stop_words:
 session_db_url: "/Users/you/Library/Application Support/com.awful-sec.aj/aj.db"
 session_name: "default"  # Set to null for no session persistence
 should_stream: true       # Enable streaming responses
+temperature: 0.7          # Sampling temperature (0.0-2.0, optional)
 ```
 
 ---
@@ -279,7 +281,48 @@ Run tests:
 cargo test
 ```
 
+## ✨ What's New in v0.4.0
+
+### 🚀 Major Features
+- **Enhanced RAG Performance**: Improved chunking algorithm with better overlap handling
+- **Pretty Printing**: Added markdown rendering with syntax highlighting for 100+ languages
+- **Session Management**: Better token budgeting with FIFO eviction
+- **Cross-platform**: Improved Windows support with proper path handling
+- **Memory Efficiency**: Optimized HNSW indexing for faster semantic search
+
+### 🔧 Improvements
+- **Better Error Messages**: More descriptive error reporting with actionable solutions
+- **Configuration Validation**: Enhanced config parsing with helpful error messages
+- **Caching**: Improved RAG cache management and cleanup
+- **Documentation**: Comprehensive troubleshooting guide and quick reference
+
+### 🐛 Bug Fixes
+- **Fixed session persistence issues** on Windows
+- **Resolved embedding download failures** with better error handling
+- **Fixed memory leaks** in long-running interactive sessions
+- **Improved template loading** with better validation
+
 ---
+
+## 🔧 Troubleshooting
+
+Common issues and solutions are covered in our [troubleshooting guide](docs/src/troubleshooting.md).
+
+Quick fixes for common problems:
+- **Model not found**: Check model name in `config.yaml`
+- **Embedding download fails**: Verify internet connection and clear cache
+- **Session errors**: Check directory permissions
+- **API connection**: Verify URL includes port and server is running
+
+## 📋 Quick Reference
+
+| Command | Purpose | Key Flags |
+|---------|---------|-----------|
+| `aj ask` | One-shot Q&A | `-t`, `-r`, `-p`, `-s` |
+| `aj interactive` | Chat REPL | `-t`, `-r`, `-p`, `-s` |
+| `aj init` | Setup configuration | `--overwrite` |
+| `aj reset` | Clear database | - |
+| `aj --help` | Show help | `-h`, `-V` |
 
 ## 🤝 Contributing
 

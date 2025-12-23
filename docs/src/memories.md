@@ -77,6 +77,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     session_db_url: "aj.db".into(),
     session_name: Some("memories-demo".into()), // ✅ enable sessions
     should_stream: Some(false),
+    temperature: None,
     };
 
     let tpl = ChatTemplate {
@@ -91,11 +92,12 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut store = VectorStore::new(384, "memories-demo".into())?;
 
     // Working memory (brain) with its own token budget
-    let mut brain = Brain::new(8092, &tpl);
+    let mut brain = Brain::new(8092, tpl.clone());
 
     // Ask a question; add_memories_to_brain will auto-inject relevant neighbors
+    // Parameters: config, question, template, vector_store, brain, pretty, show_spinner
     let answer = api::ask(&cfg, "What is our project codename?".into(), &tpl,
-                        Some(&mut store), Some(&mut brain)).await?;
+                        Some(&mut store), Some(&mut brain), false, true).await?;
 
     println!("{answer}");
 

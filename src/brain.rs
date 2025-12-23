@@ -110,7 +110,7 @@
 //! };
 //!
 //! // 2. Create a brain with token budget
-//! let mut brain = Brain::new(256, &template);
+//! let mut brain = Brain::new(256, template.clone());
 //!
 //! // 3. Create session messages
 //! let cfg = awful_aj::config::AwfulJadeConfig {
@@ -123,6 +123,7 @@
 //!     session_db_url: "".into(),
 //!     session_name: None,
 //!     should_stream: None,
+//!     temperature: None,
 //! };
 //! let mut sess = SessionMessages::new(cfg);
 //!
@@ -151,7 +152,7 @@
 //! #     pre_user_message_content: None,
 //! #     post_user_message_content: None,
 //! # };
-//! let mut brain = Brain::new(1024, &template);
+//! let mut brain = Brain::new(1024, template.clone());
 //!
 //! // Inject RAG context from document retrieval
 //! brain.rag_context = Some(
@@ -270,9 +271,9 @@
 //! #     api_key: "".into(), api_base: "".into(), model: "".into(),
 //! #     context_max_tokens: 2048, assistant_minimum_context_tokens: 256,
 //! #     stop_words: vec![], session_db_url: "".into(),
-//! #     session_name: None, should_stream: None,
+//! #     session_name: None, should_stream: None, temperature: None,
 //! # };
-//! let mut brain = Brain::new(128, &template); // Very small budget for demo
+//! let mut brain = Brain::new(128, template.clone()); // Very small budget for demo
 //! let mut sess = SessionMessages::new(cfg);
 //!
 //! // First exchange
@@ -302,7 +303,7 @@
 //! #     pre_user_message_content: None,
 //! #     post_user_message_content: None,
 //! # };
-//! let mut brain = Brain::new(512, &template);
+//! let mut brain = Brain::new(512, template.clone());
 //! brain.memories.push_back(Memory::new(Role::User, "Hello".into()));
 //! brain.memories.push_back(Memory::new(Role::Assistant, "Hi!".into()));
 //!
@@ -605,20 +606,6 @@ impl Memory {
 /// As new messages arrive, oldest messages are evicted to stay under budget.
 /// Evicted messages can be stored in long-term memory (vector store) for later retrieval.
 ///
-/// ## Lifetime Parameter
-///
-/// The `'a` lifetime ties the brain to its template reference:
-///
-/// ```rust,ignore
-/// pub struct Brain<'a> {
-///     template: &'a ChatTemplate,  // Must outlive Brain
-///     // ...
-/// }
-/// ```
-///
-/// This prevents the template from being dropped while the brain is in use,
-/// ensuring the system prompt is always available.
-///
 /// ## Token Budgeting
 ///
 /// Token limits are enforced using OpenAI's `cl100k_base` encoding:
@@ -650,13 +637,12 @@ impl Memory {
 ///
 /// - **`memories`**: FIFO queue of conversation turns (oldest at index 0)
 /// - **`max_tokens`**: Token budget for serialized brain (enforced strictly)
-/// - **`template`**: Reference to chat template (provides system prompt)
+/// - **`template`**: Owned chat template (provides system prompt)
 /// - **`rag_context`**: Optional retrieved documents (injected before brain JSON)
 ///
 /// ## Thread Safety
 ///
-/// The `Brain` is **not** `Send` or `Sync` due to the `&'a ChatTemplate` reference.
-/// For concurrent use, wrap in `Arc<Mutex<Brain>>` or use one brain per thread.
+/// `Brain` is `Send + Sync`, making it safe for use across threads and with async runtimes.
 ///
 /// ## Examples
 ///
@@ -666,14 +652,14 @@ impl Memory {
 /// # use awful_aj::brain::{Brain, Memory};
 /// # use awful_aj::template::ChatTemplate;
 /// # use async_openai::types::Role;
-/// # let template = ChatTemplate {
-/// #     system_prompt: "Be helpful".into(),
-/// #     messages: vec![],
-/// #     response_format: None,
-/// #     pre_user_message_content: None,
-/// #     post_user_message_content: None,
-/// # };
-/// let mut brain = Brain::new(512, &template);
+/// let template = ChatTemplate {
+///     system_prompt: "Be helpful".into(),
+///     messages: vec![],
+///     response_format: None,
+///     pre_user_message_content: None,
+///     post_user_message_content: None,
+/// };
+/// let mut brain = Brain::new(512, template);
 ///
 /// // Manually add memories (eviction happens automatically)
 /// brain.memories.push_back(Memory::new(Role::User, "Hi!".into()));
@@ -689,20 +675,20 @@ impl Memory {
 /// # use awful_aj::template::ChatTemplate;
 /// # use awful_aj::session_messages::SessionMessages;
 /// # use async_openai::types::Role;
-/// # let template = ChatTemplate {
-/// #     system_prompt: "Be helpful".into(),
-/// #     messages: vec![],
-/// #     response_format: None,
-/// #     pre_user_message_content: None,
-/// #     post_user_message_content: None,
-/// # };
+/// let template = ChatTemplate {
+///     system_prompt: "Be helpful".into(),
+///     messages: vec![],
+///     response_format: None,
+///     pre_user_message_content: None,
+///     post_user_message_content: None,
+/// };
 /// # let cfg = awful_aj::config::AwfulJadeConfig {
 /// #     api_key: "".into(), api_base: "".into(), model: "".into(),
 /// #     context_max_tokens: 2048, assistant_minimum_context_tokens: 256,
 /// #     stop_words: vec![], session_db_url: "".into(),
-/// #     session_name: None, should_stream: None,
+/// #     session_name: None, should_stream: None, temperature: None,
 /// # };
-/// let mut brain = Brain::new(256, &template);
+/// let mut brain = Brain::new(256, template);
 /// let mut session = SessionMessages::new(cfg);
 ///
 /// // add_memory handles eviction + preamble updates
@@ -718,14 +704,14 @@ impl Memory {
 /// ```no_run
 /// # use awful_aj::brain::{Brain, Memory};
 /// # use awful_aj::template::ChatTemplate;
-/// # let template = ChatTemplate {
-/// #     system_prompt: "Be helpful".into(),
-/// #     messages: vec![],
-/// #     response_format: None,
-/// #     pre_user_message_content: None,
-/// #     post_user_message_content: None,
-/// # };
-/// let mut brain = Brain::new(1024, &template);
+/// let template = ChatTemplate {
+///     system_prompt: "Be helpful".into(),
+///     messages: vec![],
+///     response_format: None,
+///     pre_user_message_content: None,
+///     post_user_message_content: None,
+/// };
+/// let mut brain = Brain::new(1024, template);
 ///
 /// // Inject retrieved document chunks
 /// brain.rag_context = Some(
@@ -746,7 +732,7 @@ impl Memory {
 /// - [`crate::vector_store::VectorStore`] - Long-term semantic memory
 /// - [`crate::template::ChatTemplate`] - System prompt templates
 #[derive(Debug)]
-pub struct Brain<'a> {
+pub struct Brain {
     /// FIFO queue of conversation memories (oldest at front, newest at back).
     ///
     /// Memories are added via [`add_memory`](Brain::add_memory) and automatically
@@ -766,12 +752,11 @@ pub struct Brain<'a> {
     /// - `4096+`: Large context (full conversation history)
     pub max_tokens: u16,
 
-    /// Reference to the chat template providing the system prompt.
+    /// Owned chat template providing the system prompt.
     ///
     /// The template's `system_prompt` is injected as the first message in
     /// every preamble generated by [`build_preamble`](Brain::build_preamble).
-    /// This reference must outlive the brain (enforced by lifetime `'a`).
-    pub template: &'a ChatTemplate,
+    pub template: ChatTemplate,
 
     /// Optional RAG (Retrieval-Augmented Generation) context.
     ///
@@ -785,37 +770,23 @@ pub struct Brain<'a> {
     pub rag_context: Option<String>,
 }
 
-impl<'a> Brain<'a> {
+impl Brain {
     /// Create a new brain with the specified token budget and template.
     ///
     /// Initializes an empty brain with no memories and the given configuration.
-    /// The brain borrows the template (doesn't take ownership), so the template
-    /// must outlive the brain instance.
+    /// The brain takes ownership of the template.
     ///
     /// # Parameters
     ///
     /// - **`max_tokens`**: Token budget for serialized brain JSON (enforced on each [`add_memory`](Brain::add_memory))
-    /// - **`template`**: Reference to chat template providing the system prompt
+    /// - **`template`**: Chat template providing the system prompt (takes ownership)
     ///
     /// # Returns
     ///
     /// A new `Brain` instance with:
     /// - Empty memory queue
     /// - No RAG context
-    /// - Reference to provided template
-    ///
-    /// # Lifetime
-    ///
-    /// The returned brain is tied to the template's lifetime `'a`. This ensures
-    /// the template cannot be dropped while the brain is in use:
-    ///
-    /// ```rust,ignore
-    /// {
-    ///     let template = ChatTemplate { /* ... */ };
-    ///     let brain = Brain::new(512, &template);
-    ///     // template must remain valid while brain exists
-    /// } // Both brain and template dropped here
-    /// ```
+    /// - Owned template
     ///
     /// # Examples
     ///
@@ -832,7 +803,7 @@ impl<'a> Brain<'a> {
     ///     post_user_message_content: None,
     /// };
     ///
-    /// let brain = Brain::new(512, &template);
+    /// let brain = Brain::new(512, template);
     ///
     /// assert_eq!(brain.max_tokens, 512);
     /// assert_eq!(brain.memories.len(), 0);
@@ -844,23 +815,23 @@ impl<'a> Brain<'a> {
     /// ```rust
     /// # use awful_aj::brain::Brain;
     /// # use awful_aj::template::ChatTemplate;
-    /// # let template = ChatTemplate {
-    /// #     system_prompt: "Be helpful".into(),
-    /// #     messages: vec![],
-    /// #     response_format: None,
-    /// #     pre_user_message_content: None,
-    /// #     post_user_message_content: None,
-    /// # };
+    /// let template = ChatTemplate {
+    ///     system_prompt: "Be helpful".into(),
+    ///     messages: vec![],
+    ///     response_format: None,
+    ///     pre_user_message_content: None,
+    ///     post_user_message_content: None,
+    /// };
     /// // Minimal context (a few messages)
-    /// let small_brain = Brain::new(256, &template);
+    /// let small_brain = Brain::new(256, template.clone());
     ///
     /// // Medium context (10-20 messages)
-    /// let medium_brain = Brain::new(1024, &template);
+    /// let medium_brain = Brain::new(1024, template.clone());
     ///
     /// // Large context (full conversation)
-    /// let large_brain = Brain::new(4096, &template);
+    /// let large_brain = Brain::new(4096, template);
     /// ```
-    pub fn new(max_tokens: u16, template: &'a ChatTemplate) -> Self {
+    pub fn new(max_tokens: u16, template: ChatTemplate) -> Self {
         Self {
             memories: VecDeque::<Memory>::new(),
             max_tokens,
@@ -928,9 +899,9 @@ impl<'a> Brain<'a> {
     /// #     api_key: "".into(), api_base: "".into(), model: "".into(),
     /// #     context_max_tokens: 2048, assistant_minimum_context_tokens: 256,
     /// #     stop_words: vec![], session_db_url: "".into(),
-    /// #     session_name: None, should_stream: None,
+    /// #     session_name: None, should_stream: None, temperature: None,
     /// # };
-    /// let mut brain = Brain::new(256, &template);
+    /// let mut brain = Brain::new(256, template.clone());
     /// let mut session = SessionMessages::new(cfg);
     ///
     /// // Add user message
@@ -967,9 +938,9 @@ impl<'a> Brain<'a> {
     /// #     api_key: "".into(), api_base: "".into(), model: "".into(),
     /// #     context_max_tokens: 2048, assistant_minimum_context_tokens: 256,
     /// #     stop_words: vec![], session_db_url: "".into(),
-    /// #     session_name: None, should_stream: None,
+    /// #     session_name: None, should_stream: None, temperature: None,
     /// # };
-    /// let mut brain = Brain::new(128, &template); // Very small budget
+    /// let mut brain = Brain::new(128, template.clone()); // Very small budget
     /// let mut session = SessionMessages::new(cfg);
     ///
     /// // Add memories until eviction occurs
@@ -1089,7 +1060,7 @@ impl<'a> Brain<'a> {
     /// #     pre_user_message_content: None,
     /// #     post_user_message_content: None,
     /// # };
-    /// let brain = Brain::new(512, &template);
+    /// let brain = Brain::new(512, template.clone());
     /// let serialized = brain.get_serialized();
     ///
     /// // Contains preamble + empty memories array
@@ -1110,7 +1081,7 @@ impl<'a> Brain<'a> {
     /// #     pre_user_message_content: None,
     /// #     post_user_message_content: None,
     /// # };
-    /// let mut brain = Brain::new(512, &template);
+    /// let mut brain = Brain::new(512, template.clone());
     /// brain.memories.push_back(Memory::new(Role::User, "Hello".into()));
     /// brain.memories.push_back(Memory::new(Role::Assistant, "Hi!".into()));
     ///
@@ -1229,7 +1200,7 @@ impl<'a> Brain<'a> {
     ///     post_user_message_content: None,
     /// };
     ///
-    /// let brain = Brain::new(512, &template);
+    /// let brain = Brain::new(512, template.clone());
     /// let preamble = brain.build_preamble()?;
     ///
     /// // 3 messages: System, User (brain JSON), Assistant ("Ok")
@@ -1251,7 +1222,7 @@ impl<'a> Brain<'a> {
     /// #     pre_user_message_content: None,
     /// #     post_user_message_content: None,
     /// # };
-    /// let mut brain = Brain::new(1024, &template);
+    /// let mut brain = Brain::new(1024, template.clone());
     ///
     /// // Set RAG context from vector search
     /// brain.rag_context = Some(
@@ -1453,6 +1424,7 @@ mod tests {
             session_db_url: ":memory:".to_string(),
             session_name: None,
             should_stream: Some(false),
+            temperature: None,
         }
     }
 
@@ -1509,7 +1481,7 @@ mod tests {
     #[test]
     fn test_brain_creation() {
         let template = create_test_template();
-        let brain = Brain::new(512, &template);
+        let brain = Brain::new(512, template);
 
         assert_eq!(brain.max_tokens, 512);
         assert_eq!(brain.memories.len(), 0);
@@ -1519,7 +1491,7 @@ mod tests {
     #[test]
     fn test_brain_add_memory() {
         let template = create_test_template();
-        let mut brain = Brain::new(10000, &template); // Large budget to avoid evictions
+        let mut brain = Brain::new(10000, template); // Large budget to avoid evictions
         let config = create_test_config();
         let mut session = SessionMessages::new(config);
 
@@ -1537,7 +1509,7 @@ mod tests {
     #[test]
     fn test_brain_serialization() {
         let template = create_test_template();
-        let mut brain = Brain::new(512, &template);
+        let mut brain = Brain::new(512, template);
 
         brain
             .memories
@@ -1558,7 +1530,7 @@ mod tests {
     #[test]
     fn test_brain_empty_serialization() {
         let template = create_test_template();
-        let brain = Brain::new(512, &template);
+        let brain = Brain::new(512, template);
 
         let serialized = brain.get_serialized();
 
@@ -1568,7 +1540,7 @@ mod tests {
     #[test]
     fn test_brain_build_preamble_without_rag() {
         let template = create_test_template();
-        let brain = Brain::new(512, &template);
+        let brain = Brain::new(512, template);
 
         let preamble = brain.build_preamble().unwrap();
 
@@ -1579,7 +1551,7 @@ mod tests {
     #[test]
     fn test_brain_build_preamble_with_rag() {
         let template = create_test_template();
-        let mut brain = Brain::new(512, &template);
+        let mut brain = Brain::new(512, template);
 
         brain.rag_context = Some("# Documentation\nThis is test documentation.".to_string());
 
@@ -1593,7 +1565,7 @@ mod tests {
     #[test]
     fn test_brain_build_brainless_preamble() {
         let template = create_test_template();
-        let brain = Brain::new(512, &template);
+        let brain = Brain::new(512, template);
 
         let preamble = brain.build_brainless_preamble().unwrap();
 
@@ -1605,7 +1577,7 @@ mod tests {
     fn test_brain_memory_eviction() {
         let template = create_test_template();
         // Very small budget to trigger eviction
-        let mut brain = Brain::new(50, &template);
+        let mut brain = Brain::new(50, template);
         let config = create_test_config();
         let mut session = SessionMessages::new(config);
 
@@ -1629,7 +1601,7 @@ mod tests {
     #[test]
     fn test_brain_rag_context_injection() {
         let template = create_test_template();
-        let mut brain = Brain::new(2048, &template);
+        let mut brain = Brain::new(2048, template);
 
         // Set RAG context
         let rag_docs = "# Vector Search\nHNSW is a graph-based algorithm.";
@@ -1645,7 +1617,7 @@ mod tests {
     #[test]
     fn test_brain_fifo_eviction_order() {
         let template = create_test_template();
-        let mut brain = Brain::new(100, &template); // Very small budget
+        let mut brain = Brain::new(100, template); // Very small budget
         let config = create_test_config();
         let mut session = SessionMessages::new(config);
 
@@ -1668,5 +1640,14 @@ mod tests {
                 assert!(has_fourth, "Should keep newest memories when evicting");
             }
         }
+    }
+
+    #[test]
+    fn test_brain_is_send_sync() {
+        fn assert_send<T: Send>() {}
+        fn assert_sync<T: Sync>() {}
+
+        assert_send::<Brain>();
+        assert_sync::<Brain>();
     }
 }

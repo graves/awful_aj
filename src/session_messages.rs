@@ -254,7 +254,12 @@ use tiktoken_rs::cl100k_base;
 /// - `preamble_messages`: System/brain/template messages that always lead the prompt.
 /// - `conversation_messages`: The rolling user/assistant exchange for this turn.
 /// - `config`: Copy of `AwfulJadeConfig` for token budgets and DB URL.
-/// - `sqlite_connection`: Live connection used for persistence.
+/// - `db_url`: Database URL for creating connections on demand.
+///
+/// # Thread Safety
+///
+/// `SessionMessages` is `Send + Sync`, making it safe for use across threads and with async
+/// runtimes. Database connections are created on demand for each operation to ensure thread safety.
 pub struct SessionMessages {
     /// Messages that form the system preamble, including instructions and initial memory.
     pub preamble_messages: Vec<ChatCompletionRequestMessage>,
@@ -265,23 +270,20 @@ pub struct SessionMessages {
     /// Application configuration (including token limits).
     config: AwfulJadeConfig,
 
-    /// Live SQLite connection for persisting session data.
-    sqlite_connection: SqliteConnection,
+    /// Database URL for creating connections on demand.
+    db_url: String,
 }
 
 impl SessionMessages {
     /// Create a new `SessionMessages` from an application config.
     ///
-    /// Establishes a SQLite connection immediately using `config.session_db_url`.
+    /// Database connections are created on demand when persistence operations are performed.
     ///
     /// # Parameters
     /// - `config`: Application configuration (cloned internally).
     ///
     /// # Returns
     /// A new `SessionMessages` with empty message buffers.
-    ///
-    /// # Panics
-    /// Panics if the SQLite connection cannot be established.
     ///
     /// # Examples
     /// ```no_run
@@ -298,16 +300,23 @@ impl SessionMessages {
     ///     session_db_url: "aj.db".into(),
     ///     session_name: Some("my-session".into()),
     ///     should_stream: None,
+    ///     temperature: None,
     /// };
     /// let sess = SessionMessages::new(cfg);
     /// ```
     pub fn new(config: AwfulJadeConfig) -> Self {
+        let db_url = config.session_db_url.clone();
         Self {
             preamble_messages: Vec::new(),
             conversation_messages: Vec::new(),
-            config: config.clone(),
-            sqlite_connection: establish_connection(&config.session_db_url),
+            config,
+            db_url,
         }
+    }
+
+    /// Get a database connection for the current operation.
+    fn connection(&self) -> SqliteConnection {
+        establish_connection(&self.db_url)
     }
 
     /// Serialize a chat message into the database `Message` model.
@@ -397,8 +406,9 @@ impl SessionMessages {
     ///
     /// # Returns
     /// `Ok(Message)` with the returned row, or `Err(diesel::result::Error)` on failure.
-    pub fn persist_message(&mut self, message: &Message) -> Result<Message, diesel::result::Error> {
-        let message: Message = self.sqlite_connection.transaction(|conn| {
+    pub fn persist_message(&self, message: &Message) -> Result<Message, diesel::result::Error> {
+        let mut conn = self.connection();
+        let message: Message = conn.transaction(|conn| {
             diesel::insert_into(crate::schema::messages::table)
                 .values(message)
                 .returning(Message::as_returning())
@@ -422,7 +432,7 @@ impl SessionMessages {
     /// # Panics
     /// Panics if there is no active conversation (because `query_conversation()` is unwrapped).
     pub fn persist_chat_completion_messages(
-        &mut self,
+        &self,
         messages: &Vec<ChatCompletionRequestMessage>,
     ) -> Result<Vec<Message>, diesel::result::Error> {
         let mut persisted_messages = Vec::new();
@@ -484,7 +494,7 @@ impl SessionMessages {
     /// # Returns
     /// The inserted `Message` row, or an error if the conversation could not be found or insert fails.
     pub fn insert_message(
-        &mut self,
+        &self,
         role: String,
         content: String,
     ) -> Result<Message, diesel::result::Error> {
@@ -505,24 +515,24 @@ impl SessionMessages {
     /// # Returns
     /// - `Ok(Conversation)` if found.
     /// - `Err(NotFound)` if `session_name` is `None` or the row does not exist.
-    pub fn query_conversation(&mut self) -> Result<Conversation, diesel::result::Error> {
+    pub fn query_conversation(&self) -> Result<Conversation, diesel::result::Error> {
         let a_session_name = self.config.session_name.as_ref();
 
         if a_session_name.is_none() {
             return Err(diesel::result::Error::NotFound);
         }
 
-        let conversation: Result<Conversation, diesel::result::Error> =
-            self.sqlite_connection.transaction(|conn| {
-                let existing_conversation: Result<Conversation, diesel::result::Error> =
-                    crate::schema::conversations::table
-                        .filter(
-                            crate::schema::conversations::session_name.eq(a_session_name.unwrap()),
-                        )
-                        .first(conn);
+        let mut conn = self.connection();
+        let conversation: Result<Conversation, diesel::result::Error> = conn.transaction(|conn| {
+            let existing_conversation: Result<Conversation, diesel::result::Error> =
+                crate::schema::conversations::table
+                    .filter(
+                        crate::schema::conversations::session_name.eq(a_session_name.unwrap()),
+                    )
+                    .first(conn);
 
-                existing_conversation
-            });
+            existing_conversation
+        });
 
         conversation
     }
@@ -535,18 +545,18 @@ impl SessionMessages {
     /// # Returns
     /// Vector of `Message` in that conversation, ordered by default Diesel behavior.
     pub fn query_conversation_messages(
-        &mut self,
+        &self,
         conversation: &Conversation,
     ) -> Result<Vec<Message>, diesel::result::Error> {
-        let messages: Result<Vec<Message>, diesel::result::Error> =
-            self.sqlite_connection.transaction(|conn| {
-                let recent_messages: Result<Vec<Message>, diesel::result::Error> =
-                    crate::schema::messages::table
-                        .filter(crate::schema::messages::conversation_id.eq(conversation.id))
-                        .load(conn);
+        let mut conn = self.connection();
+        let messages: Result<Vec<Message>, diesel::result::Error> = conn.transaction(|conn| {
+            let recent_messages: Result<Vec<Message>, diesel::result::Error> =
+                crate::schema::messages::table
+                    .filter(crate::schema::messages::conversation_id.eq(conversation.id))
+                    .load(conn);
 
-                recent_messages
-            });
+            recent_messages
+        });
 
         messages
     }
@@ -718,6 +728,7 @@ mod tests {
             session_db_url: ":memory:".to_string(), // Use in-memory database for tests
             session_name: Some("test_session".to_string()),
             should_stream: Some(false),
+            temperature: None,
         }
     }
 
@@ -924,5 +935,14 @@ mod tests {
         assert_eq!(message.content, "Test content");
         assert_eq!(message.dynamic, true);
         assert_eq!(message.conversation_id, Some(1));
+    }
+
+    #[test]
+    fn test_session_messages_is_send_sync() {
+        fn assert_send<T: Send>() {}
+        fn assert_sync<T: Sync>() {}
+
+        assert_send::<SessionMessages>();
+        assert_sync::<SessionMessages>();
     }
 }
