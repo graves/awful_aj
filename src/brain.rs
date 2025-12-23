@@ -344,12 +344,12 @@
 //! - [`crate::template`] - System prompt templates
 //! - [`crate::api`] - LLM API client using brain preambles
 
-use async_openai::types::{
+use async_openai::types::chat::{
     ChatCompletionRequestAssistantMessage, ChatCompletionRequestAssistantMessageContent,
     ChatCompletionRequestSystemMessage, ChatCompletionRequestSystemMessageContent,
     ChatCompletionRequestUserMessage, ChatCompletionRequestUserMessageContent,
+    ChatCompletionRequestMessage, Role,
 };
-use async_openai::types::{ChatCompletionRequestMessage, Role};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;

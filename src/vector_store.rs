@@ -780,7 +780,7 @@ impl VectorStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use async_openai::types::Role;
+    use async_openai::types::chat::Role;
 
     #[tokio::test]
     async fn test_vector_store() -> Result<(), Box<dyn Error>> {

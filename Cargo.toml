@@ -28,7 +28,7 @@ path = "src/lib.rs"
 
 [dependencies]
 # HTTP / OpenAI
-async-openai = { version = "0.30.1", default-features = false, features = ["rustls"] }
+async-openai = { version = "0.32.2", default-features = false, features = ["rustls", "chat-completion"] }
 reqwest = { version = "0.12.23", default-features = false, features = [
   "json",
   "http2",

@@ -60,7 +60,7 @@
 
 extern crate diesel;
 
-use async_openai::types::{ChatCompletionRequestMessage, ChatCompletionRequestUserMessage};
+use async_openai::types::chat::{ChatCompletionRequestMessage, ChatCompletionRequestUserMessage};
 use awful_aj::brain::Brain;
 use awful_aj::vector_store::VectorStore;
 use awful_aj::{api, commands, config, template};
@@ -629,9 +629,10 @@ fn determine_config_path() -> Result<PathBuf, Box<dyn Error>> {
     }
 }
 
-use async_openai::types::ChatCompletionRequestSystemMessage;
-use async_openai::types::ChatCompletionRequestSystemMessageContent;
-use async_openai::types::ChatCompletionRequestUserMessageContent;
+use async_openai::types::chat::{
+    ChatCompletionRequestSystemMessage, ChatCompletionRequestSystemMessageContent,
+    ChatCompletionRequestUserMessageContent,
+};
 
 /// Initialize per-user configuration files and templates.
 ///
@@ -1137,7 +1138,7 @@ fn process_rag_documents(
     pb.set_message("RAG: building index…");
     let mut rag_vectors: Vec<Vec<f32>> = Vec::with_capacity(all_chunks_with_vecs.len());
     for (text, vector) in all_chunks_with_vecs.into_iter() {
-        let memory = awful_aj::brain::Memory::new(async_openai::types::Role::System, text);
+        let memory = awful_aj::brain::Memory::new(async_openai::types::chat::Role::System, text);
         rag_store.add_vector_with_content(vector.clone(), memory)?;
         rag_vectors.push(vector);
     }

@@ -232,12 +232,12 @@
 //! - [`crate::schema`] - Auto-generated Diesel schema
 //! - [`crate::api`] - API client that consumes session messages
 
-use async_openai::types::ChatCompletionRequestAssistantMessage;
-use async_openai::types::ChatCompletionRequestAssistantMessageContent;
-use async_openai::types::ChatCompletionRequestSystemMessageContent;
-use async_openai::types::ChatCompletionRequestUserMessage;
-use async_openai::types::ChatCompletionRequestUserMessageContent;
-use async_openai::types::{ChatCompletionRequestMessage, ChatCompletionRequestSystemMessage, Role};
+use async_openai::types::chat::{
+    ChatCompletionRequestAssistantMessage, ChatCompletionRequestAssistantMessageContent,
+    ChatCompletionRequestMessage, ChatCompletionRequestSystemMessage,
+    ChatCompletionRequestSystemMessageContent, ChatCompletionRequestUserMessage,
+    ChatCompletionRequestUserMessageContent, Role,
+};
 use diesel::{Connection, SqliteConnection};
 
 use crate::{

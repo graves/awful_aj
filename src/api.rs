@@ -78,7 +78,7 @@ use crate::{
 use async_openai::{
     Client,
     config::OpenAIConfig,
-    types::{
+    types::chat::{
         ChatCompletionRequestAssistantMessage, ChatCompletionRequestAssistantMessageContent,
         ChatCompletionRequestMessage, ChatCompletionRequestSystemMessage,
         ChatCompletionRequestSystemMessageContent, ChatCompletionRequestUserMessage,

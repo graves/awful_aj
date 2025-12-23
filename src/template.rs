@@ -247,7 +247,7 @@
 //! - [`crate::config_dir()`] - Get platform-specific config directory
 //! - [`crate::brain::Brain`] - Working memory that uses templates
 
-use async_openai::types::{ChatCompletionRequestMessage, ResponseFormatJsonSchema};
+use async_openai::types::chat::{ChatCompletionRequestMessage, ResponseFormatJsonSchema};
 use serde::{Deserialize, Serialize};
 use std::{error::Error, fs};
 
